@@ -47,7 +47,7 @@ def inventory_page(db: Session):
                     try:
                         add_stock_movement(db, ing, qty, normalize_unit(unit), movement_type, unit_cost=unit_cost, note=note)
                         st.success("Mouvement ajouté.")
-                        st.experimental_rerun()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Erreur: {e}")
 
