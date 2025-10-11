@@ -50,7 +50,7 @@ def recipes_page(db: Session) -> None:
     labels, label_to_id, id_to_base = _ingredients_catalog(db)
 
     # ------------------------------------------------------------------
-    # CREER / MODIFIER une recette + INGREDIENTS des le depart
+    # 1) CREER / MODIFIER une recette + INGREDIENTS des le depart
     # ------------------------------------------------------------------
     with st.expander("Creer ou modifier une recette (avec ingredients)", expanded=True):
         colA, colB = st.columns([2, 1])
@@ -176,7 +176,7 @@ def recipes_page(db: Session) -> None:
     st.divider()
 
     # ------------------------------------------------------------------
-    # SELECTION D'UNE RECETTE EXISTANTE ET EDITION DETAILLEE
+    # 2) SELECTION D'UNE RECETTE EXISTANTE ET INGREDIENTS
     # ------------------------------------------------------------------
     recipes = db.query(Recipe).order_by(Recipe.name).all()
     if not recipes:
@@ -186,7 +186,6 @@ def recipes_page(db: Session) -> None:
     sel_name = st.selectbox("Selectionner une recette", [r.name for r in recipes])
     recipe: Recipe = db.query(Recipe).filter(Recipe.name == sel_name).first()
 
-    # Tableau des ingredients deja associes
     st.subheader(f"Ingredients — {recipe.name}")
     items = db.query(RecipeItem).filter(RecipeItem.recipe_id == recipe.id).all()
     rows = []
@@ -209,7 +208,43 @@ def recipes_page(db: Session) -> None:
     else:
         st.info("Aucun ingredient ajoute pour cette recette pour l'instant.")
 
-    # -------- Export PDF (EMPLACEMENT EXACT: juste APRES le tableau ci-dessus) --------
+    # Suppression d'un ingredient
+    with st.popover("Retirer un ingredient"):
+        if items:
+            sel = st.selectbox("Choisir un ingredient", [it.ingredient.name for it in items])
+            if st.button("Retirer"):
+                tgt = next((it for it in items if it.ingredient.name == sel), None)
+                if tgt:
+                    db.delete(tgt)
+                    db.commit()
+                    st.success("Ingredient retire.")
+                    _rerun()
+
+    # ------------------------------------------------------------------
+    # 3) ETAPES DE PREPARATION (edition + apercu)
+    # ------------------------------------------------------------------
+    st.subheader("Etapes de preparation")
+    edited = st.text_area(
+        "Modifier les etapes",
+        value=(recipe.instructions or ""),
+        height=200,
+        placeholder="Ex.: 1) Melanger la farine et le lait...\n2) Ajouter les oeufs...\n3) Cuire 2 min de chaque cote...",
+    )
+    if st.button("Enregistrer les etapes (recette selectionnee)"):
+        recipe.instructions = (edited or "").strip()
+        db.commit()
+        st.success("Etapes enregistrees.")
+
+    st.caption("Apercu (numerote)")
+    preview = [ln.strip() for ln in (edited or "").splitlines() if ln.strip()]
+    if preview:
+        st.markdown("\n".join([f"{i+1}. {line}" for i, line in enumerate(preview)]))
+    else:
+        st.write("_Aucune etape pour le moment._")
+
+    # ------------------------------------------------------------------
+    # 4) EXPORT PDF (apres les etapes)
+    # ------------------------------------------------------------------
     pdf_items = []
     for it in items:
         pdf_items.append(
@@ -246,41 +281,10 @@ def recipes_page(db: Session) -> None:
         mime="application/pdf",
         use_container_width=True,
     )
-    # -------- FIN bloc Export PDF --------
 
-    # Suppression d'un ingredient
-    with st.popover("Retirer un ingredient"):
-        if items:
-            sel = st.selectbox("Choisir un ingredient", [it.ingredient.name for it in items])
-            if st.button("Retirer"):
-                tgt = next((it for it in items if it.ingredient.name == sel), None)
-                if tgt:
-                    db.delete(tgt)
-                    db.commit()
-                    st.success("Ingredient retire.")
-                    _rerun()
-
-    # Etapes (edition rapide sur recette existante)
-    st.subheader("Etapes de preparation")
-    edited = st.text_area(
-        "Modifier les etapes",
-        value=(recipe.instructions or ""),
-        height=200,
-        placeholder="Ex.: 1) Melanger la farine et le lait...\n2) Ajouter les oeufs...\n3) Cuire 2 min de chaque cote...",
-    )
-    if st.button("Enregistrer les etapes (recette selectionnee)"):
-        recipe.instructions = (edited or "").strip()
-        db.commit()
-        st.success("Etapes enregistrees.")
-
-    st.caption("Apercu (numerote)")
-    preview = [ln.strip() for ln in (edited or "").splitlines() if ln.strip()]
-    if preview:
-        st.markdown("\n".join([f"{i+1}. {line}" for i, line in enumerate(preview)]))
-    else:
-        st.write("_Aucune etape pour le moment._")
-
-    # Couts
+    # ------------------------------------------------------------------
+    # 5) COUTS
+    # ------------------------------------------------------------------
     st.subheader("Couts")
     try:
         cost = recipe_cost(db, recipe.id)
