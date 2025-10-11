@@ -3,7 +3,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from db import Recipe, Ingredient, RecipeItem
-from pages.logic import recipe_cost
+from acpof_pages.logic import recipe_cost
 from units import normalize_unit
 from export_utils import build_recipe_pdf
 
