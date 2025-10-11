@@ -4,6 +4,12 @@ from sqlalchemy.orm import Session
 from db import Menu, MenuItem, Recipe
 from pages.logic import menu_aggregate_needs
 
+def _rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+
 def menus_page(db: Session):
     st.header("Menus")
 
