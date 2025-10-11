@@ -5,11 +5,12 @@ from db import Recipe, Ingredient, RecipeItem
 from pages.logic import recipe_cost
 from units import normalize_unit
 
+
 def recipes_page(db: Session):
     st.header("Recettes")
 
     # -----------------------------
-    # Créer / mettre à jour la fiche recette
+    # Créer / modifier une recette
     # -----------------------------
     with st.expander("➕ Créer ou modifier une recette", expanded=True):
         colA, colB = st.columns([2, 1])
@@ -43,17 +44,8 @@ def recipes_page(db: Session):
                     r.instructions = instructions.strip()
                 db.commit()
                 st.success(f"Recette enregistrée : {r.name}")
-                
 
     st.divider()
-    
-# --- Aperçu numéroté des étapes ---
-st.caption("Aperçu (numéroté)")
-preview = [ln.strip() for ln in (edited or "").splitlines() if ln.strip()]
-if preview:
-    st.markdown("\n".join([f"{i+1}. {line}" for i, line in enumerate(preview)]))
-else:
-    st.write("_Aucune étape pour le moment._")
 
     # -----------------------------
     # Sélection d'une recette existante
@@ -93,60 +85,4 @@ else:
                 else:
                     db.add(RecipeItem(
                         recipe_id=recipe.id,
-                        ingredient_id=i.id,
-                        quantity=float(qty),
-                        unit=normalize_unit(unit),
-                    ))
-                db.commit()
-                st.success("Ingrédient ajouté / mis à jour.")
-                st.experimental_rerun()
-
-    items = db.query(RecipeItem).filter(RecipeItem.recipe_id == recipe.id).all()
-    rows = []
-    for it in items:
-        rows.append({
-            "Ingrédient": it.ingredient.name,
-            "Quantité": it.quantity,
-            "Unité": it.unit,
-            "Fournisseur": (it.ingredient.supplier.name if it.ingredient.supplier else ""),
-            "Prix base ($/unité)": round(it.ingredient.price_per_base_unit, 6),
-        })
-    df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True)
-
-    # Retirer un ingrédient
-    with st.popover("🗑️ Retirer un ingrédient"):
-        if items:
-            sel = st.selectbox("Choisir un ingrédient", [it.ingredient.name for it in items])
-            if st.button("Retirer"):
-                tgt = next((it for it in items if it.ingredient.name == sel), None)
-                if tgt:
-                    db.delete(tgt)
-                    db.commit()
-                    st.success("Ingrédient retiré.")
-                    st.experimental_rerun()
-
-    # -----------------------------
-    # Étapes de préparation (édition rapide)
-    # -----------------------------
-    st.subheader("👨‍🍳 Étapes de préparation")
-    edited = st.text_area(
-        "Modifier les étapes",
-        value=(recipe.instructions or ""),
-        height=220,
-        placeholder="Ex.: 1) Mélanger la farine et le lait...\n2) Ajouter les œufs...\n3) Cuire 2 min de chaque côté...",
-    )
-    cols_steps = st.columns(2)
-    if cols_steps[0].button("💾 Enregistrer les étapes"):
-        recipe.instructions = (edited or "").strip()
-        db.commit()
-        st.success("Étapes enregistrées.")
-
-    # -----------------------------
-    # Coûts
-    # -----------------------------
-    st.subheader("💰 Coûts")
-    cost = recipe_cost(db, recipe.id)
-    c1, c2 = st.columns(2)
-    c1.metric("Coût total de la recette ($)", f"{cost['total_cost']:.2f}")
-    c2.metric("Coût par portion ($)", f"{cost['per_serving']:.2f}")
+                        ingredi
