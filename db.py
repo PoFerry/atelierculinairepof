@@ -68,6 +68,7 @@ class Recipe(Base):
     name      = Column(String, unique=True, nullable=False)
     category  = Column(String, default="Général")
     servings  = Column(Integer, default=1)
+    instructions = Column(String, default="")
     items     = relationship("RecipeItem", back_populates="recipe", cascade="all, delete-orphan")
 
 
@@ -115,5 +116,13 @@ class StockMovement(Base):
 #  INITIALISATION DE LA BASE
 # -------------------------------------------------------------------
 def init_db():
-    """Crée les tables si elles n'existent pas."""
+    """Crée les tables et ajoute la colonne 'instructions' si elle n'existe pas (SQLite)."""
     Base.metadata.create_all(bind=engine)
+    try:
+        with engine.connect() as conn:
+            res = conn.exec_driver_sql("PRAGMA table_info(recipes)")
+            cols = [r[1] for r in res]
+            if "instructions" not in [c.lower() for c in cols]:
+                conn.exec_driver_sql("ALTER TABLE recipes ADD COLUMN instructions TEXT DEFAULT ''")
+    except Exception as e:
+        pass
