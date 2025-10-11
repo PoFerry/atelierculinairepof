@@ -6,7 +6,6 @@ from db import Recipe, Ingredient, RecipeItem
 from pages.logic import recipe_cost
 from units import normalize_unit
 from export_utils import build_recipe_pdf
-from io import BytesIO
 
 
 # -------- helpers --------
@@ -26,7 +25,6 @@ def _unit_choices(base_unit: str):
 
 
 def _ingredients_catalog(db: Session):
-    """Retourne (labels, label_to_id, id_to_base) pour alimenter les selects."""
     rows = db.execute(
         select(Ingredient.id, Ingredient.name, Ingredient.category, Ingredient.base_unit).order_by(Ingredient.name)
     ).all()
@@ -34,7 +32,7 @@ def _ingredients_catalog(db: Session):
     label_to_id = {}
     id_to_base = {}
     for ing_id, ing_name, ing_cat, base in rows:
-        label = f"{ ing_name } ({ ing_cat or 'Autre' })"
+        label = f"{ing_name} ({ing_cat or 'Autre'})"
         labels.append(label)
         label_to_id[label] = ing_id
         id_to_base[ing_id] = base
@@ -68,15 +66,16 @@ def recipes_page(db: Session) -> None:
 
         st.caption("Ingredients de la recette (saisir plusieurs lignes si besoin)")
 
-        # Etat du grid lie au nom de recette en cours de saisie (key stable)
-        grid_key = f"new_recipe_grid"
+        grid_key = "new_recipe_grid"
         if grid_key not in st.session_state:
             st.session_state[grid_key] = _empty_grid_df(3)
 
         add_cols = st.columns([1, 1, 4])
         to_add = add_cols[0].number_input("Ajouter lignes", min_value=1, max_value=20, value=3, step=1)
         if add_cols[1].button("Ajouter"):
-            st.session_state[grid_key] = pd.concat([st.session_state[grid_key], _empty_grid_df(int(to_add))], ignore_index=True)
+            st.session_state[grid_key] = pd.concat(
+                [st.session_state[grid_key], _empty_grid_df(int(to_add))], ignore_index=True
+            )
 
         df_edit = st.data_editor(
             st.session_state[grid_key],
@@ -116,7 +115,7 @@ def recipes_page(db: Session) -> None:
                             instructions=(instructions or "").strip(),
                         )
                         db.add(r)
-                        db.commit()  # pour obtenir r.id
+                        db.commit()
                         db.refresh(r)
                     else:
                         r.servings = int(servings)
@@ -141,8 +140,10 @@ def recipes_page(db: Session) -> None:
                         base = id_to_base.get(ing_id, "g")
                         allowed = _unit_choices(base)
                         if unit not in allowed:
-                            st.warning(f"Ingr {label}: unite '{unit}' non compatible avec base '{base}'. "
-                                       f"Utilisez: {', '.join(allowed)}")
+                            st.warning(
+                                f"Ingr {label}: unite '{unit}' non compatible avec base '{base}'. "
+                                f"Utilisez: {', '.join(allowed)}"
+                            )
                             continue
 
                         it = (
@@ -154,17 +155,18 @@ def recipes_page(db: Session) -> None:
                             it.quantity = qty
                             it.unit = normalize_unit(unit)
                         else:
-                            db.add(RecipeItem(
-                                recipe_id=r.id,
-                                ingredient_id=ing_id,
-                                quantity=qty,
-                                unit=normalize_unit(unit),
-                            ))
+                            db.add(
+                                RecipeItem(
+                                    recipe_id=r.id,
+                                    ingredient_id=ing_id,
+                                    quantity=qty,
+                                    unit=normalize_unit(unit),
+                                )
+                            )
                         rows_ok += 1
 
                     db.commit()
                     st.success(f"Recette et ingredients enregistres (lignes valides: {rows_ok}).")
-                    # Reset du grid pour une prochaine creation
                     st.session_state[grid_key] = _empty_grid_df(3)
                     _rerun()
 
@@ -189,62 +191,62 @@ def recipes_page(db: Session) -> None:
     items = db.query(RecipeItem).filter(RecipeItem.recipe_id == recipe.id).all()
     rows = []
     for it in items:
-        rows.append({
-            "Ingredient": it.ingredient.name,
-            "Quantite": it.quantity,
-            "Unite": it.unit,
-            "Fournisseur": (it.ingredient.supplier.name if it.ingredient.supplier else ""),
-            "Prix base ($/unite)": round(it.ingredient.price_per_base_unit, 6),
-        })
+        rows.append(
+            {
+                "Ingredient": it.ingredient.name,
+                "Quantite": it.quantity,
+                "Unite": it.unit,
+                "Fournisseur": (it.ingredient.supplier.name if it.ingredient.supplier else ""),
+                "Prix base ($/unite)": round(it.ingredient.price_per_base_unit, 6),
+            }
+        )
     df_items = pd.DataFrame(rows)
     if not df_items.empty:
         st.dataframe(
-            df_items.style.format({
-                "Quantite": "{:.2f}",
-                "Prix base ($/unite)": "{:.4f}",
-            }),
-            use_container_width=True
+            df_items.style.format({"Quantite": "{:.2f}", "Prix base ($/unite)": "{:.4f}"}),
+            use_container_width=True,
         )
     else:
         st.info("Aucun ingredient ajoute pour cette recette pour l'instant.")
 
-    # --- Export PDF de la recette selectionnee ---
-pdf_items = []
-for it in items:
-    pdf_items.append((
-        it.ingredient.name,
-        float(it.quantity or 0),
-        it.unit or "",
-        (it.ingredient.supplier.name if it.ingredient.supplier else ""),
-        float(it.ingredient.price_per_base_unit or 0.0),
-    ))
+    # -------- Export PDF (EMPLACEMENT EXACT: juste APRES le tableau ci-dessus) --------
+    pdf_items = []
+    for it in items:
+        pdf_items.append(
+            (
+                it.ingredient.name,
+                float(it.quantity or 0),
+                it.unit or "",
+                (it.ingredient.supplier.name if it.ingredient.supplier else ""),
+                float(it.ingredient.price_per_base_unit or 0.0),
+            )
+        )
 
-# Calcul des couts (si pas deja fait)
-try:
-    cost = recipe_cost(db, recipe.id)
-    total_cost = float(cost.get("total_cost", 0.0))
-    per_serv = float(cost.get("per_serving", 0.0))
-except Exception:
-    total_cost, per_serv = 0.0, 0.0
+    try:
+        cost_vals = recipe_cost(db, recipe.id)
+        total_cost = float(cost_vals.get("total_cost", 0.0))
+        per_serv = float(cost_vals.get("per_serving", 0.0))
+    except Exception:
+        total_cost, per_serv = 0.0, 0.0
 
-pdf_bytes = build_recipe_pdf(
-    recipe_name=recipe.name,
-    category=recipe.category or "General",
-    servings=int(recipe.servings or 1),
-    items=pdf_items,
-    instructions=recipe.instructions or "",
-    cost_total=total_cost,
-    cost_per_serving=per_serv,
-)
+    pdf_bytes = build_recipe_pdf(
+        recipe_name=recipe.name,
+        category=recipe.category or "General",
+        servings=int(recipe.servings or 1),
+        items=pdf_items,
+        instructions=recipe.instructions or "",
+        cost_total=total_cost,
+        cost_per_serving=per_serv,
+    )
 
-st.download_button(
-    label="📄 Exporter la fiche recette (PDF)",
-    data=pdf_bytes,
-    file_name=f"Fiche_{recipe.name.replace(' ', '_')}.pdf",
-    mime="application/pdf",
-    use_container_width=True,
-)
-
+    st.download_button(
+        label="Exporter la fiche recette (PDF)",
+        data=pdf_bytes,
+        file_name=f"Fiche_{recipe.name.replace(' ', '_')}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
+    # -------- FIN bloc Export PDF --------
 
     # Suppression d'un ingredient
     with st.popover("Retirer un ingredient"):
