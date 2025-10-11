@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
 from db import Ingredient, Recipe, RecipeItem
-from logic import recipe_cost
+from pages.logic import recipe_cost
 from units import normalize_unit
 
 def recipes_page(db: Session):
