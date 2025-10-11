@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
 from db import Ingredient, StockMovement
-
+from pages.logic import current_stock_map, add_stock_movement
 # ---- import robuste: d'abord pages.logic (nouvelle place), sinon logic (ancienne) ----
 try:
     from pages.logic import current_stock_map, add_stock_movement
