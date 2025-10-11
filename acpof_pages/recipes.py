@@ -7,6 +7,11 @@ from acpof_pages.logic import recipe_cost
 from units import normalize_unit
 from export_utils import build_recipe_pdf
 
+from sheets_sync import auto_export
+
+# ... après db.commit() réussi
+auto_export(db, "recipes")
+auto_export(db, "recipe_items")
 
 # -------- helpers --------
 def _rerun():
