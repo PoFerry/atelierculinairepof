@@ -61,4 +61,5 @@ def ingredients_page(db: Session):
 
                 db.commit()
                 st.success("Ingrédient enregistré avec succès ✅")
-                st.experimental_rerun()
+                st.rerun()
+
