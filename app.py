@@ -132,7 +132,7 @@ def main():
 if __name__ == "__main__":
     main()
 # app.py
-from __future__ import annotations
+
 
 import base64
 from pathlib import Path
