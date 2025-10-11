@@ -1,4 +1,4 @@
-# app.py (extraits principaux)
+from __future__ import annotations
 
 import streamlit as st
 from pathlib import Path
