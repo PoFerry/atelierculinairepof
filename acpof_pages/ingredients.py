@@ -3,7 +3,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from db import Ingredient, Supplier
-from pages.logic import compute_price_per_base_unit
+from acpof_pages.logic import compute_price_per_base_unit
 from units import normalize_unit
 
 
