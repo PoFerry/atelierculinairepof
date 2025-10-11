@@ -208,6 +208,44 @@ def recipes_page(db: Session) -> None:
     else:
         st.info("Aucun ingredient ajoute pour cette recette pour l'instant.")
 
+    # --- Export PDF de la recette selectionnee ---
+pdf_items = []
+for it in items:
+    pdf_items.append((
+        it.ingredient.name,
+        float(it.quantity or 0),
+        it.unit or "",
+        (it.ingredient.supplier.name if it.ingredient.supplier else ""),
+        float(it.ingredient.price_per_base_unit or 0.0),
+    ))
+
+# Calcul des couts (si pas deja fait)
+try:
+    cost = recipe_cost(db, recipe.id)
+    total_cost = float(cost.get("total_cost", 0.0))
+    per_serv = float(cost.get("per_serving", 0.0))
+except Exception:
+    total_cost, per_serv = 0.0, 0.0
+
+pdf_bytes = build_recipe_pdf(
+    recipe_name=recipe.name,
+    category=recipe.category or "General",
+    servings=int(recipe.servings or 1),
+    items=pdf_items,
+    instructions=recipe.instructions or "",
+    cost_total=total_cost,
+    cost_per_serving=per_serv,
+)
+
+st.download_button(
+    label="📄 Exporter la fiche recette (PDF)",
+    data=pdf_bytes,
+    file_name=f"Fiche_{recipe.name.replace(' ', '_')}.pdf",
+    mime="application/pdf",
+    use_container_width=True,
+)
+
+
     # Suppression d'un ingredient
     with st.popover("Retirer un ingredient"):
         if items:
