@@ -1,6 +1,9 @@
 # app.py
 from __future__ import annotations
+
 import base64
+from pathlib import Path
+
 import streamlit as st
 
 from db import init_db, SessionLocal
@@ -14,33 +17,45 @@ from pages.inventory import inventory_page
 # -----------------------------
 #  UI helpers (branding & style)
 # -----------------------------
+APP_DIR = Path(__file__).parent
+LOGO_PATHS = [
+    APP_DIR / "Logo_atelierPOF.png",
+    APP_DIR / "logo_atelierpof.png",
+    APP_DIR / "assets" / "Logo_atelierPOF.png",
+]
+
+
+def _get_logo_bytes():
+    for p in LOGO_PATHS:
+        if p.exists():
+            return p.read_bytes()
+    return None
+
+
 def add_logo():
-    """Affiche le logo et l’entête de marque en haut de la page."""
-    logo_path = "Logo_atelierPOF.png"
-    try:
-        with open(logo_path, "rb") as f:
-            data = f.read()
-        encoded = base64.b64encode(data).decode()
-        st.markdown(
-            f"""
-            <div style="text-align:center; margin-top:-30px; margin-bottom:10px;">
-                <img src="data:image/png;base64,{encoded}" width="140" alt="Atelier Culinaire POF"/>
-                <h1 style="margin:8px 0 0 0; font-weight:600; letter-spacing:0.5px; color:#2f3a3a;">
-                    Atelier Culinaire
-                </h1>
-                <div style="margin-top:2px; color:#596066; font-size:16px; letter-spacing:0.5px;">
-                    <b>Pierre-Olivier Ferry</b>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    except Exception:
-        # Si le logo n'est pas présent, on n'empêche pas l'app de démarrer
+    """Affiche le logo et l’entête de marque en haut de la page (base64 inline)."""
+    data = _get_logo_bytes()
+    if not data:
         st.markdown(
             "<h1 style='text-align:center; margin-top:-20px;'>Atelier Culinaire — POF</h1>",
             unsafe_allow_html=True,
         )
+        return
+    encoded = base64.b64encode(data).decode()
+    st.markdown(
+        f"""
+        <div style="text-align:center; margin-top:-30px; margin-bottom:10px;">
+            <img src="data:image/png;base64,{encoded}" width="140" alt="Atelier Culinaire POF"/>
+            <h1 style="margin:8px 0 0 0; font-weight:600; letter-spacing:0.5px; color:#2f3a3a;">
+                Atelier Culinaire
+            </h1>
+            <div style="margin-top:2px; color:#596066; font-size:16px; letter-spacing:0.5px;">
+                <b>Pierre-Olivier Ferry</b>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def set_custom_style():
@@ -57,24 +72,19 @@ def set_custom_style():
         .stApp { background-color: var(--pof-bg); }
         h1, h2, h3, h4 { color: var(--pof-ink); }
 
-        /* sidebar */
         section[data-testid="stSidebar"] {
             background-color: var(--pof-soft);
             border-right: 1px solid rgba(0,0,0,0.05);
         }
 
-        /* boutons primaires */
         button[kind="primary"] {
             background-color: var(--pof-green) !important;
             color: #fff !important;
             border-radius: 8px !important;
             border: none !important;
         }
-        /* expander & dataframe coins adoucis */
         div[data-testid="stExpander"] { border-radius: 10px; }
         .stDataFrame { border-radius: 10px; overflow: hidden; }
-
-        /* métriques plus lisibles */
         div[data-testid="stMetric"] {
             background: white; border: 1px solid #ebede8; border-radius: 12px;
             padding: 10px 14px;
@@ -86,8 +96,12 @@ def set_custom_style():
 
 
 def sidebar_branding():
-    """Logo + liens utiles en sidebar."""
-    st.sidebar.image("Logo_atelierPOF.png", width=110, caption="")
+    """Logo en sidebar, avec fallback si le fichier est introuvable."""
+    data = _get_logo_bytes()
+    if data:
+        st.sidebar.image(data, width=110, caption="")
+    else:
+        st.sidebar.write("Atelier Culinaire — POF")
     st.sidebar.markdown("—")
     st.sidebar.caption("Atelier Culinaire • P.-O. Ferry")
     st.sidebar.markdown("—")
@@ -102,7 +116,7 @@ def home_page():
         """
         Cette application vous permet de gérer **ingrédients**, **recettes**, **menus** et
         **inventaire**, avec export **CSV/PDF**.
-        
+
         **Par où commencer ?**
         1. Allez dans **Ingrédients** pour créer votre catalogue (format d’achat, prix, fournisseur).
         2. Créez des **Recettes**, ajoutez les ingrédients et visualisez le **coût par portion**.
@@ -141,10 +155,7 @@ PAGES = {
 sidebar_branding()
 choice = st.sidebar.radio("Navigation", list(PAGES.keys()), index=0, label_visibility="visible")
 
-# Traitement page courante
 with SessionLocal() as db:
-    # Les pages qui ne manipulent pas la base n'ont pas besoin de la session,
-    # mais on garde une signature uniforme pour simplifier.
     if choice == "🏠 Accueil":
         PAGES[choice]()  # home_page sans session
     else:
