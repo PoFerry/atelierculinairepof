@@ -157,3 +157,15 @@ def import_all_tables(db) -> Dict[str, int]:
         except Exception as e:
             res[t] = -1
     return res
+
+# --- auto export helper ---
+def auto_export(db, table_name: str):
+    """Export conditionnel selon le secret sheets.auto_export_on_write."""
+    import streamlit as st
+    if st.secrets.get("sheets", {}).get("auto_export_on_write", False):
+        try:
+            export_table_from_db(db, table_name)
+        except Exception:
+            # on ne casse pas le flux de l'app si l'export échoue
+            pass
+
