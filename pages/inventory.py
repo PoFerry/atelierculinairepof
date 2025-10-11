@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+
 from sqlalchemy.orm import Session
 from db import Ingredient, StockMovement
 from pages.logic import current_stock_map, add_stock_movement
@@ -10,6 +11,12 @@ except Exception:
     from logic import current_stock_map, add_stock_movement  # fallback si jamais
 
 from units import normalize_unit
+
+def _rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
 
 
 def inventory_page(db: Session):
