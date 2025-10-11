@@ -41,7 +41,7 @@ def menus_page(db: Session):
             db.add(mi)
             db.commit()
             st.success("Ajouté au menu.")
-            st.experimental_rerun()
+            st.rerun()
 
         # afficher besoins agrégés
         st.subheader("🧾 Besoins agrégés du menu")
