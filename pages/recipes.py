@@ -43,8 +43,17 @@ def recipes_page(db: Session):
                     r.instructions = instructions.strip()
                 db.commit()
                 st.success(f"Recette enregistrée : {r.name}")
+                
 
     st.divider()
+    
+# --- Aperçu numéroté des étapes ---
+st.caption("Aperçu (numéroté)")
+preview = [ln.strip() for ln in (edited or "").splitlines() if ln.strip()]
+if preview:
+    st.markdown("\n".join([f"{i+1}. {line}" for i, line in enumerate(preview)]))
+else:
+    st.write("_Aucune étape pour le moment._")
 
     # -----------------------------
     # Sélection d'une recette existante
