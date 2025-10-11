@@ -11,6 +11,10 @@ except Exception:
     from logic import current_stock_map, add_stock_movement  # fallback si jamais
 
 from units import normalize_unit
+from sheets_sync import auto_export
+
+# ... après db.commit() réussi
+auto_export(db, "inventory")
 
 def _rerun():
     if hasattr(st, "rerun"):
