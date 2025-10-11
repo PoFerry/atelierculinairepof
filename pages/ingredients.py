@@ -8,7 +8,7 @@ from units import normalize_unit
 
 
 def _rerun():
-    # Compatibilité selon version Streamlit
+    # Compat multi-versions Streamlit
     if hasattr(st, "rerun"):
         st.rerun()
     elif hasattr(st, "experimental_rerun"):
@@ -51,46 +51,61 @@ def ingredients_page(db: Session) -> None:
                 st.error("Nom requis.")
             else:
                 try:
+                    # 1) calcul prix/unité de base
                     price_per_base = compute_price_per_base_unit(
                         pack_size=pack_size,
                         pack_unit=pack_unit,
                         base_unit=base_unit,
                         purchase_price=purchase_price,
                     )
+
+                    # 2) trouver supplier_id (ou None)
+                    supplier_id = None
+                    if supplier_sel != "(aucun)":
+                        s = next((s for s in suppliers if s.name == supplier_sel), None)
+                        supplier_id = s.id if s else None
+
+                    # 3) upsert ingrédient
+                    ing = (
+                        db.query(Ingredient)
+                        .filter(Ingredient.name.ilike(name.strip()))
+                        .first()
+                    )
+                    if ing:
+                        ing.category = (category or "Autre").strip()
+                        ing.base_unit = base_unit
+                        ing.pack_size = float(pack_size or 0)
+                        ing.pack_unit = normalize_unit(pack_unit)
+                        ing.purchase_price = float(purchase_price or 0)
+                        ing.price_per_base_unit = float(price_per_base)
+                        ing.supplier_id = supplier_id
+                    else:
+                        ing = Ingredient(
+                            name=name.strip(),
+                            category=(category or "Autre").strip(),
+                            base_unit=base_unit,
+                            pack_size=float(pack_size or 0),
+                            pack_unit=normalize_unit(pack_unit),
+                            purchase_price=float(purchase_price or 0),
+                            price_per_base_unit=float(price_per_base),
+                            supplier_id=supplier_id,
+                        )
+                        db.add(ing)
+
+                    db.commit()
+                    st.success(f"Ingrédient enregistré : {ing.name}")
+                    _rerun()
+
                 except ValueError:
                     st.error(
                         "Vérifie les unités : base et format doivent être compatibles.\n"
                         "base g → mg/g/kg ; base ml → ml/l ; base unit → unit."
                     )
-                    return
-
-                supplier = None if supplier_sel == "(aucun)" else next((s for s in suppliers if s.name == supplier_sel), None)
-
-                ing = db.query(Ingredient).filter(Ingredient.name.ilike(name.strip())).first()
-                if ing:
-                    ing.category = category.strip() or "Autre"
-                    ing.base_unit = base_unit
-                    ing.pack_size = pack_size
-                    ing.pack_unit = pack_unit
-                    ing.purchase_price = purchase_price
-                    ing.price_per_base_unit = price_per_base
-                    ing.supplier = supplier
-                else:
-                    ing = Ingredient(
-                        name=name.strip(),
-                        category=category.strip() or "Autre",
-                        base_unit=base_unit,
-                        pack_size=pack_size,
-                        pack_unit=pack_unit,
-                        purchase_price=purchase_price,
-                        price_per_base_unit=price_per_base,
-                        supplier=supplier,
-                    )
-                    db.add(ing)
-
-                db.commit()
-                st.success(f"Ingrédient enregistré : {ing.name}")
-                _rerun()
+                except AttributeError as e:
+                    # Affiche l’attribut manquant pour t’aider à diagnostiquer si ça réapparaît
+                    st.error(f"Erreur d’attribut: {e}")
+                except Exception as e:
+                    st.error(f"Erreur inattendue: {e}")
 
     # ---- Liste des ingrédients ----
     rows = db.query(Ingredient).order_by(Ingredient.name).all()
