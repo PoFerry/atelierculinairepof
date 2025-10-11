@@ -145,6 +145,24 @@ class StockMovement(Base):
     unit_cost     = Column(Float, default=0.0)
     note          = Column(String, default="")
     created_at    = Column(DateTime, default=datetime.datetime.utcnow)
+class Menu(Base):
+    __tablename__ = "menus"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    notes = Column(String, default="")
+    recipes = relationship("MenuRecipe", back_populates="menu", cascade="all, delete-orphan")
+
+
+class MenuRecipe(Base):
+    __tablename__ = "menu_recipes"
+    id = Column(Integer, primary_key=True)
+    menu_id = Column(Integer, ForeignKey("menus.id"), nullable=False)
+    recipe_id = Column(Integer, ForeignKey("recipes.id"), nullable=False)
+
+    menu = relationship("Menu", back_populates="recipes")
+    recipe = relationship("Recipe")
+
+    __table_args__ = (UniqueConstraint("menu_id", "recipe_id", name="uix_menu_recipe"),)
 
 # -------------------------------------------------------------------
 #  INIT DB (création et patch doux pour 'instructions' en SQLite)
