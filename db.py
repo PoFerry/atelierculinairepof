@@ -7,10 +7,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 import os, datetime
 
-# --- Connexion BD: Supabase (Postgres) si ACPOF_DB_URL est défini, sinon SQLite locale ---
+# -------------------------------------------------------------------
+#  CONFIGURATION : SQLite par défaut, Supabase optionnel (plus tard)
+# -------------------------------------------------------------------
 DB_PATH = os.environ.get("ACPOF_DB_PATH", "data.db")
-DB_URL  = os.environ.get("ACPOF_DB_URL")  # défini dans les Secrets Streamlit
+DB_URL  = os.environ.get("ACPOF_DB_URL")  # à ajouter plus tard dans Streamlit Secrets
 
+# Si aucune URL externe n'est définie, on reste sur SQLite local
 if DB_URL and DB_URL.startswith("postgresql"):
     engine = create_engine(
         DB_URL,
@@ -21,6 +24,7 @@ if DB_URL and DB_URL.startswith("postgresql"):
         future=True,
     )
 else:
+    # Utilisation de SQLite local (par défaut)
     engine = create_engine(
         f"sqlite:///{DB_PATH}",
         echo=False,
@@ -30,9 +34,9 @@ else:
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 Base = declarative_base()
 
-# --------------------
-#        Modèles
-# --------------------
+# -------------------------------------------------------------------
+#  DÉFINITION DES MODÈLES
+# -------------------------------------------------------------------
 class Supplier(Base):
     __tablename__ = "suppliers"
     id      = Column(Integer, primary_key=True)
@@ -41,7 +45,6 @@ class Supplier(Base):
     phone   = Column(String, default="")
     email   = Column(String, default="")
     notes   = Column(String, default="")
-    # relation inverse vers Ingredient
     ingredients = relationship("Ingredient", back_populates="supplier")
 
 
@@ -50,18 +53,11 @@ class Ingredient(Base):
     id                 = Column(Integer, primary_key=True)
     name               = Column(String, unique=True, nullable=False)
     category           = Column(String, default="Autre")
-    # unité de base pour le coût: 'g' | 'ml' | 'unit'
-    base_unit          = Column(String, default="g")
-
-    # format d’achat (ex: 1 kg, 1 L, 1 unit)
+    base_unit          = Column(String, default="g")  # 'g', 'ml', 'unit'
     pack_size          = Column(Float, nullable=False)
     pack_unit          = Column(String, nullable=False)
     purchase_price     = Column(Float, nullable=False)
-
-    # dérivé: prix par unité de base (pour accélérer les calculs)
     price_per_base_unit = Column(Float, nullable=False)
-
-    # fournisseur optionnel
     supplier_id        = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     supplier           = relationship("Supplier", back_populates="ingredients")
 
@@ -71,7 +67,7 @@ class Recipe(Base):
     id        = Column(Integer, primary_key=True)
     name      = Column(String, unique=True, nullable=False)
     category  = Column(String, default="Général")
-    servings  = Column(Integer, default=1)  # nb de portions
+    servings  = Column(Integer, default=1)
     items     = relationship("RecipeItem", back_populates="recipe", cascade="all, delete-orphan")
 
 
@@ -80,13 +76,10 @@ class RecipeItem(Base):
     id            = Column(Integer, primary_key=True)
     recipe_id     = Column(Integer, ForeignKey("recipes.id"), nullable=False)
     ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=False)
-
     quantity      = Column(Float, nullable=False)
-    unit          = Column(String, nullable=False)  # 'mg'|'g'|'kg'|'ml'|'l'|'unit'
-
+    unit          = Column(String, nullable=False)
     recipe        = relationship("Recipe", back_populates="items")
     ingredient    = relationship("Ingredient")
-
     __table_args__ = (UniqueConstraint("recipe_id", "ingredient_id", name="uq_recipe_ingredient"),)
 
 
@@ -102,7 +95,7 @@ class MenuItem(Base):
     id        = Column(Integer, primary_key=True)
     menu_id   = Column(Integer, ForeignKey("menus.id"), nullable=False)
     recipe_id = Column(Integer, ForeignKey("recipes.id"), nullable=False)
-    batches   = Column(Float, default=1.0)  # ex: 2.5 fois la recette
+    batches   = Column(Float, default=1.0)
     menu      = relationship("Menu", back_populates="items")
     recipe    = relationship("Recipe")
 
@@ -111,16 +104,16 @@ class StockMovement(Base):
     __tablename__ = "stock_movements"
     id            = Column(Integer, primary_key=True)
     ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=False)
-    # quantité en unité de base (positive = entrée, négative = sortie)
-    quantity_base = Column(Float, nullable=False)
+    quantity_base = Column(Float, nullable=False)  # positive = entrée / negative = sortie
     movement_type = Column(String, nullable=False)  # 'in' | 'out' | 'adjust'
-    unit_cost     = Column(Float, default=0.0)      # $/unité de base (pour valorisation)
+    unit_cost     = Column(Float, default=0.0)
     note          = Column(String, default="")
     created_at    = Column(DateTime, default=datetime.datetime.utcnow)
 
-# --------------------
-#   Initialisation
-# --------------------
+
+# -------------------------------------------------------------------
+#  INITIALISATION DE LA BASE
+# -------------------------------------------------------------------
 def init_db():
     """Crée les tables si elles n'existent pas."""
     Base.metadata.create_all(bind=engine)
