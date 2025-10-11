@@ -4,11 +4,12 @@ import streamlit as st
 from pathlib import Path
 from db import init_db, SessionLocal
 # pages
-from pages.ingredients import ingredients_page
-from pages.recipes import recipes_page
-from pages.menus import menus_page
-from pages.suppliers import suppliers_page
-from pages.inventory import inventory_page
+from acpof_pages.ingredients import ingredients_page
+from acpof_pages.recipes import recipes_page
+from acpof_pages.menus import menus_page
+from acpof_pages.suppliers import suppliers_page
+from acpof_pages.inventory import inventory_page
+
 
 st.set_page_config(
     page_title="Atelier Culinaire POF",
