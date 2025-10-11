@@ -2,94 +2,164 @@ from __future__ import annotations
 
 import streamlit as st
 from pathlib import Path
+from streamlit_option_menu import option_menu
 
 from db import init_db, SessionLocal
+
+# Import des pages depuis le dossier RENOMMÉ acpof_pages/
 from acpof_pages.ingredients import ingredients_page
 from acpof_pages.recipes import recipes_page
 from acpof_pages.menus import menus_page
 from acpof_pages.suppliers import suppliers_page
 from acpof_pages.inventory import inventory_page
 
-st.set_page_config(page_title="Atelier Culinaire POF", page_icon="🍽️", layout="wide")
+
+# ---------- Config globale ----------
+st.set_page_config(
+    page_title="Atelier Culinaire POF",
+    page_icon="🍽️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 APP_DIR = Path(__file__).parent
-LOGO_PATHS = [APP_DIR/"Logo_atelierPOF.png", APP_DIR/"logo_atelierpof.png", APP_DIR/"assets/Logo_atelierPOF.png"]
+LOGO_CANDIDATES = [
+    APP_DIR / "Logo_atelierPOF.png",
+    APP_DIR / "logo_atelierpof.png",
+    APP_DIR / "assets" / "Logo_atelierPOF.png",
+]
 
-def _logo_path():
-    for p in LOGO_PATHS:
+
+def _logo_path() -> str | None:
+    for p in LOGO_CANDIDATES:
         if p.exists():
             return str(p)
     return None
 
-# ——— styles (sidebar + top header) ———
-st.markdown("""
+
+# ---------- Styles (header + sidebar) ----------
+st.markdown(
+    """
 <style>
 /* Top header */
 .acpof-topbar {
-  background: linear-gradient(90deg,#111827,#1f2937);
+  background: linear-gradient(90deg,#0f172a,#1e293b);
   color: #e5e7eb;
   padding: 14px 18px;
   border-radius: 12px;
-  margin: 6px 0 16px 0;
-  display:flex; align-items:center; gap:12px;
+  margin: 8px 0 18px 0;
+  display: flex; align-items: center; gap: 12px;
   border: 1px solid rgba(255,255,255,0.06);
 }
-.acpof-topbar .title {
-  font-weight: 700; letter-spacing:.3px; font-size: 1.05rem;
+.acpof-title {
+  font-weight: 700; letter-spacing: .3px; font-size: 1.05rem;
 }
-section[data-testid="stSidebar"] { background:#0f172a; color:#e5e7eb; }
-section[data-testid="stSidebar"] * { color:#e5e7eb; }
-div[role="radiogroup"] > label {
-  padding: 10px 12px; border-radius: 10px; margin-bottom: 6px;
-  border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03);
-}
-div[role="radiogroup"] > label:hover { border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.06); }
-.sidebar-title { font-weight:700; letter-spacing:.3px; font-size:.9rem; color:#cbd5e1; margin:6px 0 4px 0; }
-.badge { display:inline-block; padding:2px 8px; border-radius:9999px; background:#1e293b; color:#cbd5e1; font-size:12px; border:1px solid rgba(255,255,255,0.08); margin-left:8px; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-def page_header():
-    logo = _logo_path()
-    if logo:
-        st.markdown(f"""
+
+def page_header() -> None:
+    """Bandeau commun en haut de chaque page."""
+    st.markdown(
+        """
         <div class="acpof-topbar">
-          <img src="app://{logo}" style="height:28px;border-radius:6px;" />
-          <div class="title">Outils de gestion ACPOF</div>
+            <div class="acpof-title">Outils de gestion ACPOF</div>
         </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="acpof-topbar"><div class="title">Outils de gestion ACPOF</div></div>', unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
-def sidebar_nav(db):
-    # petites métriques pour badges
+
+def _get_counts(db) -> tuple[int, int, int]:
+    """Retours: (nb_ingredients, nb_recettes, nb_menus)."""
     from db import Ingredient, Recipe, Menu
-    ing_n = db.query(Ingredient).count()
-    rec_n = db.query(Recipe).count()
-    menu_n = db.query(Menu).count()
+    return (
+        db.query(Ingredient).count(),
+        db.query(Recipe).count(),
+        db.query(Menu).count(),
+    )
 
-    st.sidebar.markdown('<div class="sidebar-title">Navigation</div>', unsafe_allow_html=True)
-    options = {
-        f"🧂 Ingrédients  <span class='badge'>{ing_n}</span>": ingredients_page,
-        f"📖 Recettes  <span class='badge'>{rec_n}</span>": recipes_page,
-        f"🗂️ Menus  <span class='badge'>{menu_n}</span>": menus_page,
-        "🏷️ Fournisseurs": suppliers_page,
-        "📦 Inventaire": inventory_page,
-    }
-    choice = st.sidebar.radio("", list(options.keys()), index=0, key="acpof_nav")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Atelier Culinaire Pierre-Olivier Ferry")
-    return options[choice]
 
-def main():
+def sidebar_nav(db) -> str:
+    """Affiche le logo + menu d'options dans la sidebar, retourne le nom choisi."""
+    with st.sidebar:
+        logo = _logo_path()
+        if logo:
+            st.image(logo, use_column_width=True)
+        st.write("")  # petit espace
+
+        ing_n, rec_n, menu_n = _get_counts(db)
+
+        selected = option_menu(
+            menu_title=None,
+            options=[
+                f"Ingrédients ({ing_n})",
+                f"Recettes ({rec_n})",
+                f"Menus ({menu_n})",
+                "Fournisseurs",
+                "Inventaire",
+            ],
+            icons=[
+                "basket",      # ingredients
+                "book",        # recipes
+                "list-task",   # menus
+                "truck",       # suppliers
+                "box-seam",    # inventory
+            ],
+            default_index=0,
+            styles={
+                "container": {"background-color": "#0f172a", "padding": "0.5rem 0.25rem"},
+                "icon": {"color": "#cbd5e1", "font-size": "16px"},
+                "nav-link": {
+                    "color": "#e5e7eb",
+                    "font-size": "15px",
+                    "text-align": "left",
+                    "margin": "4px 6px",
+                    "padding": "10px 12px",
+                    "border-radius": "10px",
+                },
+                "nav-link-selected": {"background-color": "#1e293b"},
+            },
+        )
+
+        st.markdown("---")
+        st.caption("Atelier Culinaire Pierre-Olivier Ferry")
+
+        return selected
+
+
+def main() -> None:
     init_db()
     db = SessionLocal()
-    # Header commun sur chaque page :
+
+    # Header commun
     page_header()
-    # Navigation custom (plus de doublons)
-    page_fn = sidebar_nav(db)
-    # Afficher la page choisie
+
+    # Navigation latérale (propre, sans doublons)
+    selected = sidebar_nav(db)
+
+    # Router
+    ROUTES = {
+        "Ingrédients": ingredients_page,
+        "Recettes": recipes_page,
+        "Menus": menus_page,
+        "Fournisseurs": suppliers_page,
+        "Inventaire": inventory_page,
+    }
+
+    # option_menu renvoie "Label (n)"; on retire la partie " (n)"
+    base_label = selected.split(" (")[0]
+
+    page_fn = ROUTES.get(base_label)
+    if page_fn is None:
+        st.error("Page inconnue dans la navigation.")
+        return
+
+    # Afficher la page
     page_fn(db)
+
 
 if __name__ == "__main__":
     main()
