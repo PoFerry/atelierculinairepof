@@ -4,7 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from db import Menu, MenuItem, Recipe, RecipeItem, Ingredient
 from units import to_base_units, normalize_unit
+from sheets_sync import auto_export
 
+# ... après db.commit() réussi
+auto_export(db, "menus")
+auto_export(db, "menu_items")
 
 def _rerun():
     try:
