@@ -1,4 +1,4 @@
-# logic.py
+# pages/logic.py
 from __future__ import annotations
 from typing import Dict
 from sqlalchemy.orm import Session
@@ -46,7 +46,6 @@ def menu_aggregate_needs(db: Session, menu_id: int) -> Dict[int, dict]:
     return needs
 
 def current_stock_map(db: Session) -> Dict[int, float]:
-    """Retourne {ingredient_id: stock_en_unite_de_base} basé sur stock_movements."""
     res = (
         db.query(StockMovement.ingredient_id, func.coalesce(func.sum(StockMovement.quantity_base), 0.0))
         .group_by(StockMovement.ingredient_id)
@@ -56,7 +55,6 @@ def current_stock_map(db: Session) -> Dict[int, float]:
 
 def add_stock_movement(db: Session, ingredient: Ingredient, qty: float, unit: str,
                        movement_type: str, unit_cost: float = 0.0, note: str = ""):
-    """Ajoute un mouvement de stock avec conversion d’unité -> unité de base."""
     qty_base = to_base_units(qty, normalize_unit(unit), ingredient.base_unit)
     if movement_type not in ("in", "out", "adjust"):
         raise ValueError("movement_type must be in|out|adjust")
