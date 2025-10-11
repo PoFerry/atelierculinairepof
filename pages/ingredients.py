@@ -8,20 +8,21 @@ from units import normalize_unit
 def ingredients_page(db: Session):
     st.header("Ingrédients")
 
-     with st.expander("➕ Ajouter / Modifier un ingrédient", expanded=True):
+    # --- Formulaire Ajouter / Modifier ---
+    with st.expander("➕ Ajouter / Modifier un ingrédient", expanded=True):
         cols = st.columns(3)
         name = cols[0].text_input("Nom *")
         category = cols[1].text_input("Catégorie", value="Autre")
         base_unit = cols[2].selectbox("Unité de base", ["g", "ml", "unit"], index=0)
 
-        # 👇 unités de format compatibles selon l’unité de base
+        # Unités de format compatibles selon l’unité de base
         if base_unit == "g":
             pack_unit_choices = ["mg", "g", "kg"]
-            pack_default_idx = 1  # g
+            pack_default_idx = 1
         elif base_unit == "ml":
             pack_unit_choices = ["ml", "l"]
             pack_default_idx = 0
-        else:  # unit
+        else:
             pack_unit_choices = ["unit"]
             pack_default_idx = 0
 
@@ -44,10 +45,10 @@ def ingredients_page(db: Session):
                         base_unit=base_unit,
                         purchase_price=purchase_price,
                     )
-                except ValueError as e:
+                except ValueError:
                     st.error(
-                        "Vérifie les unités : l’**unité de base** et l’**unité du format** doivent être compatibles. "
-                        "Exemples valides : base **g** → format en **mg/g/kg** ; base **ml** → **ml/l** ; base **unit** → **unit**."
+                        "Vérifie les unités : l’**unité de base** et l’**unité du format** doivent être compatibles.\n"
+                        "Exemples : base **g** → format en **mg/g/kg** ; base **ml** → **ml/l** ; base **unit** → **unit**."
                     )
                     st.stop()
 
@@ -77,8 +78,7 @@ def ingredients_page(db: Session):
                 db.commit()
                 st.success(f"Ingrédient enregistré : {ing.name}")
 
-
-    # --- Liste ---
+    # --- Liste des ingrédients ---
     rows = db.query(Ingredient).order_by(Ingredient.name).all()
     df = pd.DataFrame([{
         "Nom": i.name,
@@ -88,3 +88,15 @@ def ingredients_page(db: Session):
         "Fournisseur": i.supplier.name if i.supplier else ""
     } for i in rows])
     st.dataframe(df, use_container_width=True)
+
+    # --- Suppression ---
+    with st.popover("🗑️ Supprimer un ingrédient"):
+        if rows:
+            sel = st.selectbox("Choisir un ingrédient", [i.name for i in rows])
+            if st.button("Supprimer définitivement"):
+                target = db.query(Ingredient).filter(Ingredient.name == sel).first()
+                if target:
+                    db.delete(target)
+                    db.commit()
+                    st.success(f"Supprimé : {sel}")
+                    st.experimental_rerun()
