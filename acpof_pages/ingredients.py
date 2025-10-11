@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 from db import Ingredient, Supplier
 from acpof_pages.logic import compute_price_per_base_unit
 from units import normalize_unit
+from sheets_sync import auto_export
 
+# ... après db.commit() réussi
+auto_export(db, "ingredients")
 
 def _rerun():
     try:
