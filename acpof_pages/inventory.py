@@ -3,10 +3,10 @@ import pandas as pd
 
 from sqlalchemy.orm import Session
 from db import Ingredient, StockMovement
-from pages.logic import current_stock_map, add_stock_movement
+from acpof_pages.logic import current_stock_map, add_stock_movement
 # ---- import robuste: d'abord pages.logic (nouvelle place), sinon logic (ancienne) ----
 try:
-    from pages.logic import current_stock_map, add_stock_movement
+    from acpof_pages.logic import current_stock_map, add_stock_movement
 except Exception:
     from logic import current_stock_map, add_stock_movement  # fallback si jamais
 
