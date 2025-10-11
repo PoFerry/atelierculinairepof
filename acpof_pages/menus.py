@@ -219,6 +219,32 @@ def menus_page(db: Session):
         mime="text/csv",
         use_container_width=True,
     )
+# --- Synchronisation Google Sheets ---
+from sheets_sync import export_all_tables, import_all_tables
+
+def _sync_panel(db):
+    st.divider()
+    st.subheader("📤 Synchronisation Google Sheets")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Exporter toutes les tables → Sheets", use_container_width=True):
+            res = export_all_tables(db)
+            ok = {k: v for k, v in res.items() if v >= 0}
+            ko = {k: v for k, v in res.items() if v < 0}
+            st.success(f"Export terminé. OK : {list(ok.keys())}")
+            if ko:
+                st.warning(f"Échecs : {list(ko.keys())}")
+
+    with c2:
+        if st.button("Importer depuis Sheets → DB (REMPLACE)", use_container_width=True):
+            res = import_all_tables(db)
+            ok = {k: v for k, v in res.items() if v >= 0}
+            ko = {k: v for k, v in res.items() if v < 0}
+            st.success(f"Import terminé. OK : {list(ok.keys())}")
+            if ko:
+                st.warning(f"Échecs : {list(ko.keys())}")
+            st.rerun()
 
     # ------------------------------------------------------------------
     # 4) Suppression du menu
