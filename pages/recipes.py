@@ -5,6 +5,11 @@ from db import Recipe, Ingredient, RecipeItem
 from pages.logic import recipe_cost
 from units import normalize_unit
 
+def _rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
 
 def recipes_page(db: Session) -> None:
     st.header("Recettes")
