@@ -6,6 +6,11 @@ from db import Ingredient, Supplier
 from pages.logic import compute_price_per_base_unit
 from units import normalize_unit
 
+def _rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
 
 def ingredients_page(db: Session):
     st.header("Ingrédients")
