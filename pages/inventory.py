@@ -2,17 +2,8 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
 from db import Ingredient, StockMovement
-from logic import current_stock_map, add_stock_movement
-# --- import robuste de logic.py (racine du projet)
-try:
-    from logic import current_stock_map, add_stock_movement
-except Exception:
-    import sys, os
-    sys.path.append(os.path.dirname(os.path.dirname(__file__)))  # ajoute la racine du repo au path
-    from logic import current_stock_map, add_stock_movement
-
+from pages.logic import current_stock_map, add_stock_movement
 from units import normalize_unit
-
 
 def inventory_page(db: Session):
     st.header("Inventaire")
