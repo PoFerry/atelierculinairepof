@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from db import Recipe, Ingredient, RecipeItem
 from pages.logic import recipe_cost
 from units import normalize_unit
@@ -12,7 +12,6 @@ def _rerun():
     try:
         st.rerun()
     except AttributeError:
-        # compat anciennes versions streamlit
         st.experimental_rerun()
 
 
@@ -24,20 +23,36 @@ def _unit_choices(base_unit: str):
     return ["unit"]
 
 
-def _init_recipe_grid_state(key: str, rows: int = 3):
-    if key not in st.session_state:
-        st.session_state[key] = pd.DataFrame(
-            [{"Ingredient": "", "Quantite": 0.0, "Unite": ""} for _ in range(rows)]
-        )
+def _ingredients_catalog(db: Session):
+    """Retourne (labels, label_to_id, id_to_base) pour alimenter les selects."""
+    rows = db.execute(
+        select(Ingredient.id, Ingredient.name, Ingredient.category, Ingredient.base_unit).order_by(Ingredient.name)
+    ).all()
+    labels = []
+    label_to_id = {}
+    id_to_base = {}
+    for ing_id, ing_name, ing_cat, base in rows:
+        label = f"{ ing_name } ({ ing_cat or 'Autre' })"
+        labels.append(label)
+        label_to_id[label] = ing_id
+        id_to_base[ing_id] = base
+    return labels, label_to_id, id_to_base
+
+
+def _empty_grid_df(n: int = 3) -> pd.DataFrame:
+    return pd.DataFrame([{"Ingredient": "", "Quantite": 0.0, "Unite": ""} for _ in range(n)])
 
 
 def recipes_page(db: Session) -> None:
     st.header("Recettes")
 
-    # ------------------------------------------------------------
-    # Creer / modifier une recette (inclut instructions)
-    # ------------------------------------------------------------
-    with st.expander("Creer ou modifier une recette", expanded=True):
+    # Charger le catalogue des ingredients pour les menus deroulants
+    labels, label_to_id, id_to_base = _ingredients_catalog(db)
+
+    # ------------------------------------------------------------------
+    # CREER / MODIFIER une recette + INGREDIENTS des le depart
+    # ------------------------------------------------------------------
+    with st.expander("Creer ou modifier une recette (avec ingredients)", expanded=True):
         colA, colB = st.columns([2, 1])
         name = colA.text_input("Nom de la recette *")
         servings = colB.number_input("Nombre de portions", min_value=1, value=1)
@@ -45,165 +60,130 @@ def recipes_page(db: Session) -> None:
 
         instructions = st.text_area(
             "Etapes de preparation",
-            placeholder="Decrivez les etapes (ex. 1) Melanger... 2) Cuire... 3) Dresser...)",
-            height=160,
+            placeholder="Ex.: 1) Melanger... 2) Cuire... 3) Dresser...",
+            height=140,
         )
 
-        if st.button("Enregistrer la recette"):
+        st.caption("Ingredients de la recette (saisir plusieurs lignes si besoin)")
+
+        # Etat du grid lie au nom de recette en cours de saisie (key stable)
+        grid_key = f"new_recipe_grid"
+        if grid_key not in st.session_state:
+            st.session_state[grid_key] = _empty_grid_df(3)
+
+        add_cols = st.columns([1, 1, 4])
+        to_add = add_cols[0].number_input("Ajouter lignes", min_value=1, max_value=20, value=3, step=1)
+        if add_cols[1].button("Ajouter"):
+            st.session_state[grid_key] = pd.concat([st.session_state[grid_key], _empty_grid_df(int(to_add))], ignore_index=True)
+
+        df_edit = st.data_editor(
+            st.session_state[grid_key],
+            key="editor_new_recipe",
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Ingredient": st.column_config.SelectboxColumn(
+                    "Ingredient",
+                    options=[""] + labels,
+                    help="Choisir un ingredient du catalogue",
+                ),
+                "Quantite": st.column_config.NumberColumn(
+                    "Quantite", min_value=0.0, step=1.0, format="%.2f"
+                ),
+                "Unite": st.column_config.SelectboxColumn(
+                    "Unite",
+                    options=["", "mg", "g", "kg", "ml", "l", "unit"],
+                    help="Unite compatible avec l'unite de base de l'ingredient",
+                ),
+            },
+        )
+
+        if st.button("Enregistrer la recette + ingredients"):
             if not name.strip():
                 st.warning("Nom requis.")
             else:
-                r = db.query(Recipe).filter(Recipe.name.ilike(name.strip())).first()
-                if not r:
-                    r = Recipe(
-                        name=name.strip(),
-                        servings=int(servings),
-                        category=category.strip() or "General",
-                        instructions=(instructions or "").strip(),
-                    )
-                    db.add(r)
-                else:
-                    r.servings = int(servings)
-                    r.category = category.strip() or "General"
-                    r.instructions = (instructions or "").strip()
-                db.commit()
-                st.success(f"Recette enregistree : {r.name}")
+                try:
+                    # 1) Upsert recette
+                    r = db.query(Recipe).filter(Recipe.name.ilike(name.strip())).first()
+                    if not r:
+                        r = Recipe(
+                            name=name.strip(),
+                            servings=int(servings),
+                            category=(category or "General").strip(),
+                            instructions=(instructions or "").strip(),
+                        )
+                        db.add(r)
+                        db.commit()  # pour obtenir r.id
+                        db.refresh(r)
+                    else:
+                        r.servings = int(servings)
+                        r.category = (category or "General").strip()
+                        r.instructions = (instructions or "").strip()
+                        db.commit()
+
+                    # 2) Enregistrer lignes d'ingredients du tableau
+                    rows_ok = 0
+                    for _, row in df_edit.iterrows():
+                        label = (row.get("Ingredient") or "").strip()
+                        if not label:
+                            continue
+                        qty = float(row.get("Quantite") or 0)
+                        if qty <= 0:
+                            continue
+                        unit = (row.get("Unite") or "").strip()
+                        ing_id = label_to_id.get(label)
+                        if not ing_id:
+                            continue
+
+                        base = id_to_base.get(ing_id, "g")
+                        allowed = _unit_choices(base)
+                        if unit not in allowed:
+                            st.warning(f"Ingr {label}: unite '{unit}' non compatible avec base '{base}'. "
+                                       f"Utilisez: {', '.join(allowed)}")
+                            continue
+
+                        it = (
+                            db.query(RecipeItem)
+                            .filter(RecipeItem.recipe_id == r.id, RecipeItem.ingredient_id == ing_id)
+                            .first()
+                        )
+                        if it:
+                            it.quantity = qty
+                            it.unit = normalize_unit(unit)
+                        else:
+                            db.add(RecipeItem(
+                                recipe_id=r.id,
+                                ingredient_id=ing_id,
+                                quantity=qty,
+                                unit=normalize_unit(unit),
+                            ))
+                        rows_ok += 1
+
+                    db.commit()
+                    st.success(f"Recette et ingredients enregistres (lignes valides: {rows_ok}).")
+                    # Reset du grid pour une prochaine creation
+                    st.session_state[grid_key] = _empty_grid_df(3)
+                    _rerun()
+
+                except Exception as e:
+                    st.error(f"Erreur lors de l'enregistrement: {e}")
 
     st.divider()
 
-    # ------------------------------------------------------------
-    # Selection recette
-    # ------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # SELECTION D'UNE RECETTE EXISTANTE ET EDITION DETAILLEE
+    # ------------------------------------------------------------------
     recipes = db.query(Recipe).order_by(Recipe.name).all()
     if not recipes:
-        st.info("Creez d'abord une recette ci-dessus.")
+        st.info("Aucune recette en base pour le moment.")
         return
 
     sel_name = st.selectbox("Selectionner une recette", [r.name for r in recipes])
     recipe: Recipe = db.query(Recipe).filter(Recipe.name == sel_name).first()
 
-    # ------------------------------------------------------------
-    # Chargement ingredients disponibles (pour menus deroulants)
-    # ------------------------------------------------------------
-    ing_rows = db.execute(select(Ingredient.id, Ingredient.name, Ingredient.category, Ingredient.base_unit)
-                          .order_by(Ingredient.name)).all()
-    # tuples (id, name, category, base_unit)
-    if not ing_rows:
-        st.warning("Aucun ingredient dans le catalogue. Ajoutez-en d'abord dans Ingrédients.")
-        return
-
-    # etiquettes visibles et mappings
-    labels = []
-    label_to_id = {}
-    id_to_base = {}
-    for ing_id, ing_name, ing_cat, base in ing_rows:
-        label = f"{ing_name} ({ing_cat or 'Autre'})"
-        labels.append(label)
-        label_to_id[label] = ing_id
-        id_to_base[ing_id] = base
-
-    # ------------------------------------------------------------
-    # Tableau editable: ajout multiple d'ingredients pour la recette
-    # ------------------------------------------------------------
+    # Tableau des ingredients deja associes
     st.subheader(f"Ingredients — {recipe.name}")
-
-    grid_key = f"recipe_grid_{recipe.id}"
-    _init_recipe_grid_state(grid_key, rows=3)
-
-    st.caption("Ajouter plusieurs ingredients (une ligne par ingredient). "
-               "Choisissez l'ingredient, saisissez la quantite, puis l'unite.")
-
-    add_cols = st.columns([1, 1, 2])
-    add_n = add_cols[0].number_input("Ajouter lignes", min_value=1, max_value=20, value=3, step=1)
-    if add_cols[1].button("Ajouter"):
-        df0 = st.session_state[grid_key]
-        more = pd.DataFrame([{"Ingredient": "", "Quantite": 0.0, "Unite": ""} for _ in range(int(add_n))])
-        st.session_state[grid_key] = pd.concat([df0, more], ignore_index=True)
-
-    # configuration du data_editor
-    df_edit = st.data_editor(
-        st.session_state[grid_key],
-        key=f"editor_{recipe.id}",
-        num_rows="dynamic",
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Ingredient": st.column_config.SelectboxColumn(
-                "Ingredient",
-                help="Choisir un ingredient du catalogue",
-                options=[""] + labels,
-                required=False,
-            ),
-            "Quantite": st.column_config.NumberColumn(
-                "Quantite",
-                help="Quantite utilisee pour la recette",
-                min_value=0.0,
-                step=1.0,
-                format="%.2f",
-            ),
-            "Unite": st.column_config.SelectboxColumn(
-                "Unite",
-                help="Unite de la quantite saisie (compatible avec l'unite de base de l'ingredient)",
-                options=["", "mg", "g", "kg", "ml", "l", "unit"],
-                required=False,
-            ),
-        },
-    )
-
-    # bouton d'enregistrement en lot
-    if st.button("Enregistrer les ingredients ajoutes/updates"):
-        try:
-            rows_ok = 0
-            for _, row in df_edit.iterrows():
-                label = (row.get("Ingredient") or "").strip()
-                if not label:
-                    continue
-                qty = float(row.get("Quantite") or 0)
-                if qty <= 0:
-                    continue
-                unit = (row.get("Unite") or "").strip()
-                ing_id = label_to_id.get(label)
-                if not ing_id:
-                    continue
-
-                # valider compatibilite unite
-                base = id_to_base.get(ing_id, "g")
-                allowed = _unit_choices(base)
-                if unit not in allowed:
-                    st.warning(f"Ingr {label}: unite '{unit}' non compatible avec base '{base}'. "
-                               f"Utilisez: {', '.join(allowed)}")
-                    continue
-
-                # upsert RecipeItem
-                it = (
-                    db.query(RecipeItem)
-                    .filter(RecipeItem.recipe_id == recipe.id, RecipeItem.ingredient_id == ing_id)
-                    .first()
-                )
-                if it:
-                    it.quantity = qty
-                    it.unit = normalize_unit(unit)
-                else:
-                    db.add(RecipeItem(
-                        recipe_id=recipe.id,
-                        ingredient_id=ing_id,
-                        quantity=qty,
-                        unit=normalize_unit(unit),
-                    ))
-                rows_ok += 1
-
-            db.commit()
-            if rows_ok:
-                st.success(f"{rows_ok} ligne(s) enregistree(s).")
-            else:
-                st.info("Aucune ligne valide a enregistrer.")
-            _rerun()
-        except Exception as e:
-            st.error(f"Erreur lors de l'enregistrement: {e}")
-
-    # ------------------------------------------------------------
-    # Tableau des ingredients deja associes a la recette
-    # ------------------------------------------------------------
     items = db.query(RecipeItem).filter(RecipeItem.recipe_id == recipe.id).all()
     rows = []
     for it in items:
@@ -226,7 +206,7 @@ def recipes_page(db: Session) -> None:
     else:
         st.info("Aucun ingredient ajoute pour cette recette pour l'instant.")
 
-    # suppression d'un ingredient
+    # Suppression d'un ingredient
     with st.popover("Retirer un ingredient"):
         if items:
             sel = st.selectbox("Choisir un ingredient", [it.ingredient.name for it in items])
@@ -238,17 +218,15 @@ def recipes_page(db: Session) -> None:
                     st.success("Ingredient retire.")
                     _rerun()
 
-    # ------------------------------------------------------------
-    # Etapes de preparation (edition + apercu)
-    # ------------------------------------------------------------
+    # Etapes (edition rapide sur recette existante)
     st.subheader("Etapes de preparation")
     edited = st.text_area(
         "Modifier les etapes",
         value=(recipe.instructions or ""),
-        height=220,
+        height=200,
         placeholder="Ex.: 1) Melanger la farine et le lait...\n2) Ajouter les oeufs...\n3) Cuire 2 min de chaque cote...",
     )
-    if st.button("Enregistrer les etapes"):
+    if st.button("Enregistrer les etapes (recette selectionnee)"):
         recipe.instructions = (edited or "").strip()
         db.commit()
         st.success("Etapes enregistrees.")
@@ -260,9 +238,7 @@ def recipes_page(db: Session) -> None:
     else:
         st.write("_Aucune etape pour le moment._")
 
-    # ------------------------------------------------------------
     # Couts
-    # ------------------------------------------------------------
     st.subheader("Couts")
     try:
         cost = recipe_cost(db, recipe.id)
