@@ -115,7 +115,7 @@ def recipes_page(db: Session) -> None:
                     ))
                 db.commit()
                 st.success("Ingrédient ajouté / mis à jour.")
-                st.experimental_rerun()
+                st.rerun()
 
     # Tableau des ingrédients de la recette
     items = db.query(RecipeItem).filter(RecipeItem.recipe_id == recipe.id).all()
@@ -150,7 +150,7 @@ def recipes_page(db: Session) -> None:
                     db.delete(tgt)
                     db.commit()
                     st.success("Ingrédient retiré.")
-                    st.experimental_rerun()
+                    st.rerun()
 
     # ------------------------------------------------------------------
     # Étapes de préparation (édition + aperçu numéroté)
