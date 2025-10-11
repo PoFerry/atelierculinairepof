@@ -1,3 +1,136 @@
+# app.py (extraits principaux)
+
+import streamlit as st
+from pathlib import Path
+from db import init_db, SessionLocal
+# pages
+from pages.ingredients import ingredients_page
+from pages.recipes import recipes_page
+from pages.menus import menus_page
+from pages.suppliers import suppliers_page
+from pages.inventory import inventory_page
+
+st.set_page_config(
+    page_title="Atelier Culinaire POF",
+    page_icon="🍽️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+APP_DIR = Path(__file__).parent
+LOGO_PATHS = [
+    APP_DIR / "Logo_atelierPOF.png",
+    APP_DIR / "logo_atelierpof.png",
+    APP_DIR / "assets" / "Logo_atelierPOF.png",
+]
+
+def _logo_path():
+    for p in LOGO_PATHS:
+        if p.exists():
+            return str(p)
+    return None
+
+# --- petit CSS pour la sidebar ---
+st.markdown("""
+<style>
+/* fond + typographie sidebar */
+section[data-testid="stSidebar"] {
+  background: #0f172a; /* slate-900 */
+  color: #e5e7eb;      /* gray-200 */
+}
+section[data-testid="stSidebar"] * {
+  color: #e5e7eb;
+}
+
+/* boutons radio plus élégants */
+div[role="radiogroup"] > label {
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+}
+div[role="radiogroup"] > label:hover {
+  border-color: rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.06);
+}
+
+/* titre / caption */
+.sidebar-title {
+  font-weight: 700; letter-spacing:.3px; font-size: 0.9rem; color:#cbd5e1; /* slate-300 */
+  margin: 6px 0 4px 0;
+}
+
+/* badge arrondi */
+.badge {
+  display:inline-block; padding:2px 8px; border-radius:9999px;
+  background:#1e293b; color:#cbd5e1; font-size:12px; border:1px solid rgba(255,255,255,0.08);
+  margin-left: 8px;
+}
+
+/* masquer le hamburger + footer streamlit si tu veux encore plus clean */
+/*
+button[kind="header"] {visibility:hidden;}
+footer {visibility:hidden;}
+*/
+</style>
+""", unsafe_allow_html=True)
+
+def sidebar_branding():
+    logo = _logo_path()
+    if logo:
+        st.sidebar.image(logo, use_column_width=True)
+    st.sidebar.markdown('<div class="sidebar-title">Navigation</div>', unsafe_allow_html=True)
+
+def get_counts(db):
+    # evite les imports circulaires
+    from db import Ingredient, Recipe, Menu
+    return (
+        db.query(Ingredient).count(),
+        db.query(Recipe).count(),
+        db.query(Menu).count()
+    )
+
+def main():
+    init_db()
+    db = SessionLocal()
+
+    # --- Branding + métriques ---
+    sidebar_branding()
+    ing_count, rec_count, menu_count = get_counts(db)
+
+    # dictionnaire de pages: pas de doublons
+    PAGES = {
+        "🏠 Accueil": None,           # optionnel si tu as une page home
+        f"🧂 Ingrédients  <span class='badge'>{ing_count}</span>": ingredients_page,
+        f"📖 Recettes  <span class='badge'>{rec_count}</span>": recipes_page,
+        f"🗂️ Menus  <span class='badge'>{menu_count}</span>": menus_page,
+        "🏷️ Fournisseurs": suppliers_page,
+        "📦 Inventaire": inventory_page,
+    }
+
+    # affichage radio avec HTML autorisé (formatage badges)
+    choice = st.sidebar.radio(
+        label="",
+        options=list(PAGES.keys()),
+        index=1 if "Ingrédients" in list(PAGES.keys())[1] else 0,
+        key="nav_choice",
+    )
+
+    # petit séparateur
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Atelier Culinaire Pierre-Olivier Ferry")
+
+    # router
+    page_fn = PAGES[choice]
+    if page_fn is None:
+        st.title("Bienvenue 👋")
+        st.write("Choisis une section dans la navigation à gauche.")
+    else:
+        page_fn(db)
+
+if __name__ == "__main__":
+    main()
 # app.py
 from __future__ import annotations
 
