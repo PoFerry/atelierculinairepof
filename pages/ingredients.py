@@ -8,7 +8,6 @@ from units import normalize_unit
 
 
 def _rerun():
-    # Compat multi-versions Streamlit
     if hasattr(st, "rerun"):
         st.rerun()
     elif hasattr(st, "experimental_rerun"):
@@ -18,8 +17,11 @@ def _rerun():
 def ingredients_page(db: Session) -> None:
     st.header("Ingrédients")
 
-    # ---- Charger fournisseurs ----
-    suppliers = db.execute(select(Supplier).order_by(Supplier.name)).scalars().all()
+    # ---- Charger fournisseurs et préparer un mapping nom -> id ----
+    sup_rows = db.execute(select(Supplier.id, Supplier.name).order_by(Supplier.name)).all()
+    # sup_rows est une liste de tuples (id, name)
+    name_to_id = {name: sup_id for (sup_id, name) in sup_rows}
+    supplier_options = ["(aucun)"] + list(name_to_id.keys())
 
     # ---- Formulaire Ajouter / Modifier ----
     with st.expander("➕ Ajouter / Modifier un ingrédient", expanded=True):
@@ -43,8 +45,7 @@ def ingredients_page(db: Session) -> None:
         pack_unit = st.selectbox("Unité du format", pack_unit_choices, index=pack_default_idx)
         purchase_price = st.number_input("Prix d’achat ($)", min_value=0.0, value=10.0, step=0.01)
 
-        supplier_names = ["(aucun)"] + [s.name for s in suppliers]
-        supplier_sel = st.selectbox("Fournisseur", supplier_names)
+        supplier_sel = st.selectbox("Fournisseur", supplier_options, index=0)
 
         if st.button("Enregistrer"):
             if not name.strip():
@@ -59,11 +60,8 @@ def ingredients_page(db: Session) -> None:
                         purchase_price=purchase_price,
                     )
 
-                    # 2) trouver supplier_id (ou None)
-                    supplier_id = None
-                    if supplier_sel != "(aucun)":
-                        s = next((s for s in suppliers if s.name == supplier_sel), None)
-                        supplier_id = s.id if s else None
+                    # 2) supplier_id (None si (aucun))
+                    supplier_id = None if supplier_sel == "(aucun)" else name_to_id.get(supplier_sel)
 
                     # 3) upsert ingrédient
                     ing = (
@@ -101,9 +99,6 @@ def ingredients_page(db: Session) -> None:
                         "Vérifie les unités : base et format doivent être compatibles.\n"
                         "base g → mg/g/kg ; base ml → ml/l ; base unit → unit."
                     )
-                except AttributeError as e:
-                    # Affiche l’attribut manquant pour t’aider à diagnostiquer si ça réapparaît
-                    st.error(f"Erreur d’attribut: {e}")
                 except Exception as e:
                     st.error(f"Erreur inattendue: {e}")
 
