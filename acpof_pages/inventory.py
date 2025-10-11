@@ -14,7 +14,7 @@ from units import normalize_unit
 from sheets_sync import auto_export
 
 # ... après db.commit() réussi
-auto_export(db, "inventory")
+auto_export(db, "stock_movements")
 
 def _rerun():
     if hasattr(st, "rerun"):
