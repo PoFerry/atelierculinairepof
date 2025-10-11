@@ -1,56 +1,87 @@
 import streamlit as st
 import pandas as pd
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from db import Menu, MenuItem, Recipe
-from pages.logic import menu_aggregate_needs
+from db import Menu, MenuRecipe, Recipe
 
-def _rerun():
-    if hasattr(st, "rerun"):
-        st.rerun()
-    elif hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()
 
 def menus_page(db: Session):
     st.header("Menus")
 
-    with st.expander("➕ Créer un menu", expanded=True):
-        name = st.text_input("Nom du menu")
-        if st.button("Créer"):
-            if not name.strip():
-                st.warning("Nom requis.")
-            else:
-                m = db.query(Menu).filter(Menu.name.ilike(name.strip())).first()
-                if not m:
-                    m = Menu(name=name.strip())
-                    db.add(m)
-                    db.commit()
-                    st.success(f"Menu créé : {m.name}")
-                else:
-                    st.info("Ce menu existe déjà.")
+    # ------------------------------------------------------------------
+    # SECTION : Création / modification de menu
+    # ------------------------------------------------------------------
+    with st.expander("Créer ou modifier un menu", expanded=True):
+        name = st.text_input("Nom du menu *", placeholder="Ex. Menu d'automne ou Menu Saint-Valentin")
+        notes = st.text_area("Notes (optionnel)", placeholder="Ex. Détails sur le service ou les allergènes...")
 
-    menus = db.query(Menu).order_by(Menu.name).all()
-    st.subheader("📋 Liste des menus")
-    st.dataframe(pd.DataFrame([{"Nom": m.name} for m in menus]), use_container_width=True)
+        # Sélection des recettes existantes
+        recipes = db.execute(select(Recipe).order_by(Recipe.name)).scalars().all()
+        recipe_labels = [r.name for r in recipes]
+        selected_recipes = st.multiselect(
+            "Recettes à inclure dans ce menu",
+            recipe_labels,
+            help="Sélectionnez une ou plusieurs recettes déjà enregistrées"
+        )
+
+        if st.button("Enregistrer le menu"):
+            if not name.strip():
+                st.warning("Le nom du menu est requis.")
+            else:
+                try:
+                    menu = db.query(Menu).filter(Menu.name.ilike(name.strip())).first()
+                    if not menu:
+                        menu = Menu(name=name.strip(), notes=notes.strip())
+                        db.add(menu)
+                        db.commit()
+                        db.refresh(menu)
+                    else:
+                        menu.notes = notes.strip()
+                        db.commit()
+
+                    # Supprimer les associations existantes
+                    db.query(MenuRecipe).filter(MenuRecipe.menu_id == menu.id).delete()
+
+                    # Ajouter les nouvelles associations
+                    for label in selected_recipes:
+                        r = next((x for x in recipes if x.name == label), None)
+                        if r:
+                            db.add(MenuRecipe(menu_id=menu.id, recipe_id=r.id))
+                    db.commit()
+
+                    st.success(f"Menu '{menu.name}' enregistré avec {len(selected_recipes)} recette(s).")
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Erreur lors de l'enregistrement du menu: {e}")
 
     st.divider()
-    sel = st.selectbox("Choisir un menu :", [m.name for m in menus] if menus else [])
-    if sel:
-        m = db.query(Menu).filter(Menu.name == sel).first()
-        st.subheader(f"Menu : {m.name}")
 
-        recipes = db.query(Recipe).order_by(Recipe.name).all()
-        r_map = {r.name: r for r in recipes}
-        sel_recipe = st.selectbox("Ajouter une recette :", list(r_map.keys()))
-        qty = st.number_input("Nombre de fois cette recette", min_value=0.1, value=1.0, step=0.1)
-        if st.button("Ajouter au menu"):
-            mi = MenuItem(menu_id=m.id, recipe_id=r_map[sel_recipe].id, batches=qty)
-            db.add(mi)
+    # ------------------------------------------------------------------
+    # SECTION : Liste des menus existants
+    # ------------------------------------------------------------------
+    menus = db.query(Menu).order_by(Menu.name).all()
+    if not menus:
+        st.info("Aucun menu enregistré pour le moment.")
+        return
+
+    st.subheader("Menus existants")
+    for m in menus:
+        st.markdown(f"### 🍽️ {m.name}")
+        if m.notes:
+            st.caption(m.notes)
+
+        links = db.query(MenuRecipe).filter(MenuRecipe.menu_id == m.id).all()
+        if not links:
+            st.write("_Aucune recette associée._")
+        else:
+            df = pd.DataFrame(
+                [{"Recette": l.recipe.name, "Catégorie": l.recipe.category or ""} for l in links]
+            )
+            st.dataframe(df, hide_index=True, use_container_width=True)
+
+        if st.button(f"🗑️ Supprimer le menu '{m.name}'", key=f"del_{m.id}"):
+            db.delete(m)
             db.commit()
-            st.success("Ajouté au menu.")
+            st.success(f"Menu '{m.name}' supprimé.")
             st.rerun()
-
-        # afficher besoins agrégés
-        st.subheader("🧾 Besoins agrégés du menu")
-        needs = menu_aggregate_needs(db, m.id)
-        df = pd.DataFrame(list(needs.values()))
-        st.dataframe(df, use_container_width=True)
