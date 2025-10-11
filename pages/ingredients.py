@@ -8,9 +8,10 @@ from units import normalize_unit
 
 
 def _rerun():
-    if hasattr(st, "rerun"):
+    try:
         st.rerun()
-    elif hasattr(st, "experimental_rerun"):
+    except AttributeError:
+        # Compatibilité avec anciennes versions de Streamlit
         st.experimental_rerun()
 
 
