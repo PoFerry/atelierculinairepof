@@ -5,3 +5,37 @@ fpdf2==2.7.9
 psycopg2-binary==2.9.9
 reportlab>=4.0.0
 streamlit-option-menu>=0.3.12
+
+from streamlit_option_menu import option_menu
+
+# ...
+
+with st.sidebar:
+    logo = _logo_path()
+    if logo:
+        st.image(logo, use_column_width=True)
+    st.markdown('<div class="sidebar-title">Navigation</div>', unsafe_allow_html=True)
+
+    selected = option_menu(
+        menu_title=None,
+        options=["Ingrédients", "Recettes", "Menus", "Fournisseurs", "Inventaire"],
+        icons=["bezier", "book-half", "calendar2-check", "tag", "box-seam"],  # Bootstrap icons
+        menu_icon="list",
+        default_index=0,
+        styles={
+            "container": {"background-color": "#0f172a", "padding": "0"},
+            "icon": {"color": "#cbd5e1"},
+            "nav-link": {"color":"#e5e7eb", "font-size": "15px", "text-align": "left", "margin":"4px 0"},
+            "nav-link-selected": {"background-color": "#1e293b"},
+        },
+    )
+
+# router:
+MAP = {
+    "Ingrédients": ingredients_page,
+    "Recettes": recipes_page,
+    "Menus": menus_page,
+    "Fournisseurs": suppliers_page,
+    "Inventaire": inventory_page,
+}
+MAP[selected](db)
