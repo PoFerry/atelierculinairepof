@@ -7,9 +7,6 @@ from acpof_pages.logic import compute_price_per_base_unit
 from units import normalize_unit
 from sheets_sync import auto_export
 
-# ... après db.commit() réussi
-auto_export(db, "ingredients")
-
 def _rerun():
     try:
         st.rerun()
@@ -95,8 +92,8 @@ def ingredients_page(db: Session) -> None:
                         db.add(ing)
 
                     db.commit()
-                    st.success(f"Ingrédient enregistré : {ing.name}")
-                    _rerun()
+                    st.success("Ingrédient enregistré.")
+                    auto_export(db, "ingredients") 
 
                 except ValueError:
                     st.error(
@@ -138,5 +135,5 @@ def ingredients_page(db: Session) -> None:
                 if target:
                     db.delete(target)
                     db.commit()
-                    st.success(f"Supprimé : {sel}")
-                    _rerun()
+                    st.success("Ingrédient supprimé.")
+                    auto_export(db, "ingredients") 
