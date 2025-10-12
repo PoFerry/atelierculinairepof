@@ -4,11 +4,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from db import Menu, MenuItem, Recipe, RecipeItem, Ingredient
 from units import to_base_units, normalize_unit
-from sheets_sync import auto_export
 
-# ... après db.commit() réussi
-auto_export(db, "menus")
-auto_export(db, "menu_items")
+# Optionnel : export auto vers Google Sheets si activé dans secrets
+try:
+    from sheets_sync import auto_export  # ne casse pas si non configuré
+except Exception:  # pragma: no cover
+    def auto_export(*args, **kwargs):
+        pass
+
 
 def _rerun():
     try:
@@ -27,7 +30,6 @@ def _pretty_qty(base_unit: str, qty: float) -> tuple[float, str]:
         if qty >= 1000:
             return qty / 1000.0, "l"
         return qty, "ml"
-    # unit (pièce)
     return qty, "unit"
 
 
@@ -88,10 +90,8 @@ def menus_page(db: Session):
                         menu = Menu(name=name.strip())
                         db.add(menu)
                         db.commit()
-                        st.success("menu enregistré.")
-                        auto_export(db, "menus")
                         db.refresh(menu)
-                    # notes (si le champ existe dans ton modèle)
+                    # notes si dispo
                     if hasattr(menu, "notes"):
                         menu.notes = (notes or "").strip()
 
@@ -110,14 +110,16 @@ def menus_page(db: Session):
                             if not rec:
                                 continue
                             base_serv = float(rec.servings or 1)
-                            batches = portions / base_serv  # <-- conversion clé
+                            batches = portions / base_serv
                             db.add(MenuItem(menu_id=menu.id, recipe_id=rec.id, batches=batches))
                             cnt += 1
-                        db.commit()
-                        st.success("Menu enregistré.")
-                        auto_export(db, "menus")
-                    else:
-                        st.info("Menu enregistré sans recettes.")
+
+                    db.commit()
+                    # synchro
+                    auto_export(db, "menus")
+                    auto_export(db, "menu_items")
+
+                    st.success(f"Menu « {menu.name} » enregistré.")
                     _rerun()
 
                 except Exception as e:
@@ -163,12 +165,10 @@ def menus_page(db: Session):
         st.info("Aucune recette → pas de besoins.")
         return
 
-    # Agrégation : somme des ingrédients requis pour chaque recette * batches
-    # On convertit chaque quantité d'item de recette vers l'unité de base de l'ingrédient.
-    needs = {}  # key: ingredient_id -> {"name":..., "base_unit":..., "total_base": float, "supplier": str}
+    needs = {}  # ingredient_id -> agg
     for l in links:
         rec = l.recipe
-        factor = float(l.batches or 0.0)  # multiplier toutes les quantités de la recette
+        factor = float(l.batches or 0.0)
         if factor <= 0:
             continue
 
@@ -179,12 +179,9 @@ def menus_page(db: Session):
             unit = normalize_unit(it.unit or ing.base_unit or "g")
             if qty <= 0:
                 continue
-
-            # convertir vers unité de base de l'ingrédient
             try:
                 base_qty = to_base_units(qty, unit, ing.base_unit or "g")
             except Exception:
-                # si conversion impossible (mauvaise unité), on ignore cette ligne
                 continue
 
             total_add = base_qty * factor
@@ -202,9 +199,8 @@ def menus_page(db: Session):
         st.info("Aucun besoin calculable (vérifier unités/quantités).")
         return
 
-    # Préparer DataFrame d'affichage (joli)
     out_rows = []
-    for ing_id, info in sorted(needs.items(), key=lambda x: x[1]["name"].lower()):
+    for _, info in sorted(needs.items(), key=lambda x: x[1]["name"].lower()):
         qty_base = info["total_base"]
         disp_qty, disp_unit = _pretty_qty(info["base_unit"], qty_base)
         out_rows.append({
@@ -217,7 +213,7 @@ def menus_page(db: Session):
     df_needs = pd.DataFrame(out_rows)
     st.dataframe(df_needs, hide_index=True, use_container_width=True)
 
-    # Optionnel : export CSV des besoins
+    # Export CSV des besoins
     csv = df_needs.to_csv(index=False).encode("utf-8")
     st.download_button(
         label="📥 Exporter la liste des besoins (CSV)",
@@ -226,32 +222,6 @@ def menus_page(db: Session):
         mime="text/csv",
         use_container_width=True,
     )
-# --- Synchronisation Google Sheets ---
-from sheets_sync import export_all_tables, import_all_tables
-
-def _sync_panel(db):
-    st.divider()
-    st.subheader("📤 Synchronisation Google Sheets")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Exporter toutes les tables → Sheets", use_container_width=True):
-            res = export_all_tables(db)
-            ok = {k: v for k, v in res.items() if v >= 0}
-            ko = {k: v for k, v in res.items() if v < 0}
-            st.success(f"Export terminé. OK : {list(ok.keys())}")
-            if ko:
-                st.warning(f"Échecs : {list(ko.keys())}")
-
-    with c2:
-        if st.button("Importer depuis Sheets → DB (REMPLACE)", use_container_width=True):
-            res = import_all_tables(db)
-            ok = {k: v for k, v in res.items() if v >= 0}
-            ko = {k: v for k, v in res.items() if v < 0}
-            st.success(f"Import terminé. OK : {list(ok.keys())}")
-            if ko:
-                st.warning(f"Échecs : {list(ko.keys())}")
-            st.rerun()
 
     # ------------------------------------------------------------------
     # 4) Suppression du menu
@@ -260,7 +230,7 @@ def _sync_panel(db):
         if st.button(f"Supprimer définitivement « {menu.name} »"):
             db.delete(menu)
             db.commit()
-            st.success("Menu supprimé.")
+            auto_export(db, "menus")
             auto_export(db, "menu_items")
-            
+            st.success("Menu supprimé.")
             _rerun()
