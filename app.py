@@ -3,16 +3,11 @@ from __future__ import annotations
 import streamlit as st
 from pathlib import Path
 from streamlit_option_menu import option_menu
+from importlib import import_module
 
 from db import init_db, SessionLocal
-from acpof_pages.ingredients import ingredients_page
-from acpof_pages.recipes import recipes_page
-from acpof_pages.menus import menus_page
-from acpof_pages.suppliers import suppliers_page
-from acpof_pages.inventory import inventory_page
 
-
-# ---------- Config globale ----------
+# ---------- Config ----------
 st.set_page_config(
     page_title="Atelier Culinaire POF",
     page_icon="🍽️",
@@ -27,13 +22,11 @@ LOGO_CANDIDATES = [
     APP_DIR / "assets" / "Logo_atelierPOF.png",
 ]
 
-
 def _logo_path() -> str | None:
     for p in LOGO_CANDIDATES:
         if p.exists():
             return str(p)
     return None
-
 
 # ---------- Styles (header) ----------
 st.markdown(
@@ -54,7 +47,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 def page_header() -> None:
     st.markdown(
         """
@@ -65,7 +57,6 @@ def page_header() -> None:
         unsafe_allow_html=True,
     )
 
-
 def _get_counts(db) -> tuple[int, int, int]:
     from db import Ingredient, Recipe, Menu
     return (
@@ -74,16 +65,13 @@ def _get_counts(db) -> tuple[int, int, int]:
         db.query(Menu).count(),
     )
 
-
 def sidebar_nav(db) -> str:
     with st.sidebar:
         logo = _logo_path()
         if logo:
             st.image(logo, use_column_width=True)
         st.write("")
-
         ing_n, rec_n, menu_n = _get_counts(db)
-
         selected = option_menu(
             menu_title=None,
             options=[
@@ -109,37 +97,43 @@ def sidebar_nav(db) -> str:
                 "nav-link-selected": {"background-color": "#1e293b"},
             },
         )
-
         st.markdown("---")
         st.caption("Atelier Culinaire Pierre-Olivier Ferry")
-
         return selected
 
+# ---------- Import paresseux ----------
+ROUTES = {
+    "Ingrédients": ("acpof_pages.ingredients", "ingredients_page"),
+    "Recettes": ("acpof_pages.recipes", "recipes_page"),
+    "Menus": ("acpof_pages.menus", "menus_page"),
+    "Fournisseurs": ("acpof_pages.suppliers", "suppliers_page"),
+    "Inventaire": ("acpof_pages.inventory", "inventory_page"),
+}
+
+def load_page_callable(label: str):
+    mod_name, fn_name = ROUTES[label]
+    try:
+        mod = import_module(mod_name)
+        return getattr(mod, fn_name)
+    except Exception as e:
+        st.error(f"Erreur lors du chargement de la page **{label}** ({mod_name}.{fn_name}) : {e}")
+        st.stop()
 
 def main() -> None:
     init_db()
     db = SessionLocal()
 
     page_header()
-
     selected = sidebar_nav(db)
 
-    ROUTES = {
-        "Ingrédients": ingredients_page,
-        "Recettes": recipes_page,
-        "Menus": menus_page,
-        "Fournisseurs": suppliers_page,
-        "Inventaire": inventory_page,
-    }
-
     base_label = selected.split(" (")[0]
-    page_fn = ROUTES.get(base_label)
-    if page_fn is None:
+    if base_label not in ROUTES:
         st.error("Page inconnue dans la navigation.")
         return
 
+    page_fn = load_page_callable(base_label)
     page_fn(db)
-
 
 if __name__ == "__main__":
     main()
+    
