@@ -122,13 +122,16 @@ def recipes_page(db: Session) -> None:
                         )
                         db.add(r)
                         db.commit()
+                        st.success("Recette enregistré.")
+                        auto_export(db, "recipes") 
                         db.refresh(r)
                     else:
                         r.servings = int(servings)
                         r.category = (category or "Général").strip()
                         r.instructions = (instructions or "").strip()
                         db.commit()
-
+                         auto_export(db, "recipes") 
+                        
                     # 2) Enregistrer lignes d'ingrédients du tableau
                     rows_ok = 0
                     for _, row in df_edit.iterrows():
@@ -172,7 +175,7 @@ def recipes_page(db: Session) -> None:
                         rows_ok += 1
 
                     db.commit()
-                    st.success(f"Recette et ingrédients enregistrés (lignes valides: {rows_ok}).")
+                    auto_export(db, "recipes") 
                     st.session_state[grid_key] = _empty_grid_df(3)
                     _rerun()
 
@@ -223,7 +226,8 @@ def recipes_page(db: Session) -> None:
                 if tgt:
                     db.delete(tgt)
                     db.commit()
-                    st.success("Ingrédient retiré.")
+                    st.success("Recette supprimée.")
+                    auto_export(db, "recipe_items") 
                     _rerun()
 
     # ------------------------------------------------------------------
