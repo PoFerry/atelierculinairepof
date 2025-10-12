@@ -1,4 +1,2 @@
 [server]
 fileWatcherType = "poll"
-# (optionnel) pour éviter les relances incessantes pendant l'édition
-# runOnSave = false
