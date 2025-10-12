@@ -88,6 +88,8 @@ def menus_page(db: Session):
                         menu = Menu(name=name.strip())
                         db.add(menu)
                         db.commit()
+                        st.success("menu enregistré.")
+                        auto_export(db, "menus")
                         db.refresh(menu)
                     # notes (si le champ existe dans ton modèle)
                     if hasattr(menu, "notes"):
@@ -112,7 +114,8 @@ def menus_page(db: Session):
                             db.add(MenuItem(menu_id=menu.id, recipe_id=rec.id, batches=batches))
                             cnt += 1
                         db.commit()
-                        st.success(f"Menu « {menu.name} » enregistré ({cnt} recette(s)).")
+                        st.success("Menu enregistré.")
+                        auto_export(db, "menus")
                     else:
                         st.info("Menu enregistré sans recettes.")
                     _rerun()
@@ -258,4 +261,6 @@ def _sync_panel(db):
             db.delete(menu)
             db.commit()
             st.success("Menu supprimé.")
+            auto_export(db, "menu_items")
+            
             _rerun()
