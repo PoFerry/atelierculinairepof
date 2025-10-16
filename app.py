@@ -5,6 +5,8 @@ from pathlib import Path
 from streamlit_option_menu import option_menu
 from importlib import import_module
 
+from sqlalchemy.exc import OperationalError
+
 from db import init_db, SessionLocal
 
 # ---------- Config ----------
@@ -59,11 +61,19 @@ def page_header() -> None:
 
 def _get_counts(db) -> tuple[int, int, int]:
     from db import Ingredient, Recipe, Menu
-    return (
-        db.query(Ingredient).count(),
-        db.query(Recipe).count(),
-        db.query(Menu).count(),
-    )
+    try:
+        return (
+            db.query(Ingredient).count(),
+            db.query(Recipe).count(),
+            db.query(Menu).count(),
+        )
+    except OperationalError:
+        db.rollback()
+        st.warning(
+            "Impossible de récupérer les compteurs depuis la base de données. "
+            "Vérifiez la connexion puis réessayez."
+        )
+        return (0, 0, 0)
 
 def sidebar_nav(db) -> str:
     with st.sidebar:
