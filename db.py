@@ -16,6 +16,7 @@ from sqlalchemy import (
     inspect,
     text,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 
@@ -205,13 +206,42 @@ def init_db() -> None:
         ingredient_indexes.isdisjoint({"uix_supplier_code", "uix_ingredients_supplier_code"})
         and "uix_supplier_code" not in ingredient_uniques
     ):
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uix_ingredients_supplier_code "
-                    "ON ingredients (supplier_id, supplier_code)"
-                )
-            )
+        duplicate_query = text(
+            """
+            SELECT 1
+            FROM ingredients
+            WHERE TRIM(COALESCE(supplier_code, '')) != ''
+            GROUP BY supplier_id, supplier_code
+            HAVING COUNT(*) > 1
+            LIMIT 1
+            """
+        )
+        try:
+            with engine.connect() as conn:
+                has_duplicates = conn.execute(duplicate_query).first() is not None
+        except OperationalError:
+            has_duplicates = True
+
+        index_sql = text(
+            "CREATE INDEX IF NOT EXISTS idx_ingredients_supplier_code "
+            "ON ingredients (supplier_id, supplier_code)"
+        )
+
+        if has_duplicates:
+            with engine.begin() as conn:
+                conn.execute(index_sql)
+        else:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS uix_ingredients_supplier_code "
+                            "ON ingredients (supplier_id, supplier_code)"
+                        )
+                    )
+            except OperationalError:
+                with engine.begin() as conn:
+                    conn.execute(index_sql)
 
     try:
         menu_cols = {col["name"] for col in insp.get_columns("menus")}
