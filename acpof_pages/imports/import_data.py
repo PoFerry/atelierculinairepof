@@ -26,9 +26,9 @@ except Exception:  # pragma: no cover - si l'export n'est pas configuré
     import_table_to_db = None
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Résultats d'import
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 @dataclass
 class ImportResult:
@@ -38,18 +38,15 @@ class ImportResult:
 
     def as_message(self) -> str:
         errs = self.errors or []
-        parts = [
-            f"{self.created} créé(s)",
-            f"{self.updated} mis à jour",
-        ]
+        parts = [f"{self.created} créé(s)", f"{self.updated} mis à jour"]
         if errs:
             parts.append(f"{len(errs)} erreur(s)")
         return " · ".join(parts)
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Normalisation des entêtes
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 def _canon(s: str) -> str:
     """Normalise une chaîne : retire accents, ponctuation, casse, etc."""
@@ -77,9 +74,9 @@ def _normalize_columns(df: pd.DataFrame, aliases: Dict[str, Iterable[str]]) -> p
     return df.rename(columns=rename_map)
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Alias de colonnes
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 INGREDIENT_ALIASES = {
     "name": {"name", "nom", "nom du produit", "nom du produits", "produit"},
@@ -124,9 +121,9 @@ RECIPE_ALIASES = {
 }
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Coercions & Helpers
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 def _coerce_str(value) -> str:
     if pd.isna(value):
@@ -195,9 +192,9 @@ def _coerce_float(value) -> Optional[float]:
             raise ValueError(f"Valeur numérique invalide: {value}")
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Unités : nettoyage + familles
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 _UNIT_COUNT = {
     "unit", "unite", "u", "piece", "pièce", "pc", "pz",
@@ -256,7 +253,7 @@ def _reconcile_units(base_u: str, pack_u: str, pack_size: Optional[float]) -> tu
     - si base manquante : on déduit depuis pack_unit ; sinon fallback 'unit'
     - si pack='unit' & base mass/vol -> pack = base (pack_size exprimé dans la base)
     - si base=count & pack mass/vol -> base = canon(pack)
-    - si base mass & pack vol (ou inverse) -> base s'aligne sur pack
+    - si base mass & pack vol (ou inverse) -> aligner base sur pack
     """
     base_u = _clean_unit_text(base_u)
     pack_u = _clean_unit_text(pack_u)
@@ -290,7 +287,7 @@ def _reconcile_units(base_u: str, pack_u: str, pack_size: Optional[float]) -> tu
         pack_u = base_u_c
         pack_f = base_f
 
-    # base=count & pack mass/vol -> base = pack
+    # base=count & pack mass/vol -> base = pack (mesure utile pour le coût)
     if base_f == "count" and pack_f in {"mass", "vol"}:
         base_u_c = canon_base(pack_u)
         base_f = fam(base_u_c)
@@ -300,15 +297,15 @@ def _reconcile_units(base_u: str, pack_u: str, pack_size: Optional[float]) -> tu
         base_u_c = canon_base(pack_u)
         base_f = fam(base_u_c)
 
-    # Normalisation finale via normalize_unit
+    # Normalisation finale via normalize_unit (ton module units)
     norm_base = normalize_unit(base_u_c) if base_u_c else "unit"
     norm_pack = normalize_unit(pack_u) if pack_u else norm_base
     return norm_base, norm_pack
 
 
-# -----------------------------------------------------------------------------
-# Résolution fournisseur
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Fournisseur & codes
+# =============================================================================
 
 def _resolve_supplier(db: Session, cache: Dict[str, Supplier], name: str) -> Supplier | None:
     if not name:
@@ -329,9 +326,20 @@ def _resolve_supplier(db: Session, cache: Dict[str, Supplier], name: str) -> Sup
     return supplier
 
 
-# -----------------------------------------------------------------------------
+def _normalize_supplier_code(val) -> Optional[str]:
+    """Codes fournisseurs vides/placeholder -> None (évite collision d'unicité)."""
+    s = _coerce_str(val).strip()
+    if not s:
+        return None
+    placeholders = {"na", "n/a", "-", "—", "s/o", "null", "none"}
+    if s.lower() in placeholders:
+        return None
+    return s
+
+
+# =============================================================================
 # Parsing ingrédients (tolérant aux cases vides)
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
     entries: List[dict] = []
@@ -390,7 +398,7 @@ def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
                     "purchase_price": float(purchase_price),
                     "price_per_base_unit": float(price_per_base),
                     "supplier": _coerce_str(row.get("supplier")),
-                    "supplier_code": _coerce_str(row.get("supplier_code")),
+                    "supplier_code": _normalize_supplier_code(row.get("supplier_code")),
                 }
             )
 
@@ -408,36 +416,58 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
     supplier_cache: Dict[str, Supplier] = {}
 
     for payload in rows:
-        supplier = _resolve_supplier(db, supplier_cache, payload["supplier"])
-        ingredient = (
-            db.query(Ingredient)
-            .filter(func.lower(Ingredient.name) == payload["name"].lower())
-            .one_or_none()
-        )
+        # Résoudre fournisseur (peut être None)
+        supplier = _resolve_supplier(db, supplier_cache, payload.get("supplier", ""))
+        supplier_id = supplier.id if supplier else None
+
+        # Normaliser le supplier_code : None si vide/placeholder
+        supplier_code = _normalize_supplier_code(payload.get("supplier_code"))
+        name = payload["name"]
+
+        # 1) Si on a un code fournisseur non vide => rechercher par (supplier_id, supplier_code)
+        ingredient = None
+        if supplier_id is not None and supplier_code:
+            ingredient = (
+                db.query(Ingredient)
+                .filter(Ingredient.supplier_id == supplier_id)
+                .filter(func.lower(Ingredient.supplier_code) == supplier_code.lower())
+                .one_or_none()
+            )
+
+        # 2) Sinon, fallback sur la recherche par nom (comme avant)
+        if ingredient is None:
+            ingredient = (
+                db.query(Ingredient)
+                .filter(func.lower(Ingredient.name) == name.lower())
+                .one_or_none()
+            )
+
+        # 3) Créer ou mettre à jour
         if ingredient:
             updated += 1
         else:
-            ingredient = Ingredient(name=payload["name"])
+            ingredient = Ingredient(name=name)
             db.add(ingredient)
             created += 1
 
-        ingredient.category = payload["category"] or "Autre"
+        ingredient.category = payload.get("category") or "Autre"
         ingredient.base_unit = payload["base_unit"]
         ingredient.pack_size = payload["pack_size"]
         ingredient.pack_unit = payload["pack_unit"]
         ingredient.purchase_price = payload["purchase_price"]
         ingredient.price_per_base_unit = payload["price_per_base_unit"]
-        ingredient.supplier_id = supplier.id if supplier else None
-        ingredient.supplier_code = payload["supplier_code"] or ""
+        ingredient.supplier_id = supplier_id
+        # CRUCIAL : None et pas "", sinon collision d'unicité
+        ingredient.supplier_code = supplier_code  # None si vide
 
     db.commit()
     auto_export(db, "ingredients")
     return ImportResult(created=created, updated=updated, errors=[])
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Parsing recettes
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], List[str]]:
     df = _normalize_columns(df, RECIPE_ALIASES)
@@ -552,9 +582,9 @@ def _apply_recipe_import(db: Session, recipes: Dict[str, dict]) -> ImportResult:
     return ImportResult(created=created, updated=updated, errors=[])
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Lecture CSV tolérante
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 def _read_uploaded_csv(uploaded_file) -> pd.DataFrame:
     if uploaded_file is None:
@@ -571,9 +601,9 @@ def _read_uploaded_csv(uploaded_file) -> pd.DataFrame:
         return pd.read_csv(uploaded_file, sep=None, engine="python", encoding="latin-1")
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # UI Streamlit
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 def _render_sheet_import_section(db: Session) -> None:
     if import_table_to_db is None or import_all_tables is None:
