@@ -80,8 +80,16 @@ def sidebar_nav(db) -> str:
                 f"Menus ({menu_n})",
                 "Fournisseurs",
                 "Inventaire",
+                   "Importations",
             ],
-            icons=["basket", "book", "list-task", "truck", "box-seam"],
+            icons=[
+                "basket",
+                "book",
+                "list-task",
+                "truck",
+                "box-seam",
+                "cloud-arrow-up",
+            ],
             default_index=0,
             styles={
                 "container": {"background-color": "#0f172a", "padding": "0.5rem 0.25rem"},
@@ -108,6 +116,7 @@ ROUTES = {
     "Menus": ("acpof_pages.menus", "menus_page"),
     "Fournisseurs": ("acpof_pages.suppliers", "suppliers_page"),
     "Inventaire": ("acpof_pages.inventory", "inventory_page"),
+    "Importations": ("acpof_pages.imports.import_data", "imports_page"),
 }
 
 def load_page_callable(label: str):
