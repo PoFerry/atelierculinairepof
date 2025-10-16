@@ -318,7 +318,7 @@ def render_recipes_tab(conn):
         st.success(f"Recettes importées ✅ — Lignes ajoutées: {added_lines}, Lignes ignorées: {skipped}")
 
 # --------------------- PAGE ---------------------
-def imports_page():
+def imports_page(_db=None):
     st.title("Import CSV — Ingrédients & Recettes")
     conn = get_conn()
     init_schema(conn)
