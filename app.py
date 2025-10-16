@@ -61,7 +61,7 @@ def page_header() -> None:
     )
 
 def _get_counts(db) -> tuple[int, int, int]:
-    ffrom db import Ingredient, Menu, Recipe
+    from db import Ingredient, Menu, Recipe
 
     def _count(model):
         stmt = select(func.count()).select_from(model)
