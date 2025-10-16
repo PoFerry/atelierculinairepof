@@ -131,18 +131,81 @@ def _coerce_str(value) -> str:
 
 
 def _coerce_float(value) -> Optional[float]:
+    """Convertit en float en tolérant :
+    - virgule décimale (fr) ou point (en)
+    - séparateurs de milliers (espace, NBSP, espace étroit, virgule)
+    - suffixes monnaie (%) / $ / CAD / EUR / USD
+    - valeurs vides -> None
+    """
     if pd.isna(value):
         return None
     if isinstance(value, (int, float)):
         return float(value)
+
     txt = str(value).strip()
     if not txt:
         return None
-    txt = txt.replace(" ", "").replace(",", ".")
+
+    # Normalisation espaces (classiques, NBSP, espace étroit)
+    txt = re.sub(r"[\s\u00A0\u202F]+", "", txt)
+
+    # Retirer symboles monétaires/codes et %
+    txt = txt.replace("$", "").replace("€", "").replace("£", "")
+    txt = re.sub(r"(cad|usd|eur)$", "", txt, flags=re.IGNORECASE)
+    txt = txt.replace("%", "")
+
+    # Cas mixtes "1,234.56" -> enlever virgules de milliers
+    if "," in txt and "." in txt:
+        txt = txt.replace(",", "")
+    else:
+        # Cas FR "1234,56" -> virgule décimale
+        if "," in txt and "." not in txt:
+            txt = txt.replace(",", ".")
+
+    txt = txt.strip()
+    if txt == "":
+        return None
+
     try:
         return float(txt)
     except ValueError:
-        raise ValueError(f"Valeur numérique invalide: {value}")
+        # Dernier filet: garder chiffres/signes/point
+        txt2 = re.sub(r"[^0-9\.\-+]", "", txt)
+        if txt2 in ("", ".", "-.", "+."):
+            return None
+        try:
+            return float(txt2)
+        except Exception:
+            raise ValueError(f"Valeur numérique invalide: {value}")
+
+
+def _clean_unit_text(s: str) -> str:
+    """Nettoie les unités saisies de façon libre avant normalize_unit."""
+    s = str(s or "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("’", "").replace("'", "").replace("`", "")
+    # Enlever préfixes / ponctuations (ex: "/g", "- kg")
+    s = re.sub(r"^[\/\-\–\—\s]+", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    # Pluriels simples
+    if s.endswith("s") and s not in ("lbs",):
+        s = s[:-1]
+    # Synonymes usuels FR/EN
+    synonyms = {
+        "unite": "unit",
+        "u": "unit",
+        "piece": "unit",
+        "pc": "unit",
+        "pz": "unit",
+        "litre": "l",
+        "millilitre": "ml",
+        "milliliter": "ml",
+        "gramme": "g",
+        "kilogramme": "kg",
+        "lbs": "lb",
+    }
+    return synonyms.get(s, s)
 
 
 def _resolve_supplier(db: Session, cache: Dict[str, Supplier], name: str) -> Supplier | None:
@@ -184,12 +247,20 @@ def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
             name = _coerce_str(row.get("name"))
             if not name:
                 raise ValueError("Nom requis")
-            base_unit = normalize_unit(_coerce_str(row.get("base_unit")) or "")
-            if not base_unit:
+
+            # Nettoyage puis normalisation des unités
+            base_unit_txt = _clean_unit_text(_coerce_str(row.get("base_unit")) or "")
+            pack_unit_txt = _clean_unit_text(_coerce_str(row.get("pack_unit")) or base_unit_txt)
+
+            if not base_unit_txt:
                 raise ValueError("Unité de base manquante")
-            pack_unit = normalize_unit(_coerce_str(row.get("pack_unit")) or base_unit)
+
+            base_unit = normalize_unit(base_unit_txt)
+            pack_unit = normalize_unit(pack_unit_txt or base_unit)
+
             pack_size = _coerce_float(row.get("pack_size"))
             purchase_price = _coerce_float(row.get("purchase_price"))
+
             if pack_size is None or pack_size <= 0:
                 raise ValueError("Format d'achat invalide")
             if purchase_price is None or purchase_price < 0:
@@ -309,7 +380,7 @@ def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], 
         if qty is None:
             errors.append(f"Ligne {line_no}: quantité manquante")
             continue
-        unit = normalize_unit(_coerce_str(row.get("unit")) or "g")
+        unit = normalize_unit(_clean_unit_text(_coerce_str(row.get("unit")) or "g"))
         ingredient = (
             db.query(Ingredient)
             .filter(func.lower(Ingredient.name) == ing_name.lower())
