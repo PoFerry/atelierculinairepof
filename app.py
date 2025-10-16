@@ -8,7 +8,7 @@ from importlib import import_module
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
-from db import init_db, SessionLocal
+from db import Ingredient, Menu, Recipe, init_db, SessionLocal
 
 # ---------- Config ----------
 st.set_page_config(
@@ -61,8 +61,6 @@ def page_header() -> None:
     )
 
 def _get_counts(db) -> tuple[int, int, int]:
-    from db import Ingredient, Menu, Recipe
-
     def _count(model):
         stmt = select(func.count()).select_from(model)
         return db.execute(stmt).scalar_one()
