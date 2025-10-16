@@ -1,7 +1,15 @@
 # db.py
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Float,
-    ForeignKey, UniqueConstraint, DateTime
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Float,
+    ForeignKey,
+    UniqueConstraint,
+    DateTime,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 import os, datetime
@@ -48,6 +56,7 @@ class Ingredient(Base):
 
     supplier_id = Column(Integer, ForeignKey("suppliers.id"))
     supplier = relationship("Supplier", back_populates="ingredients")
+    supplier_code = Column(String, default="")
 
     pack_size = Column(Float, default=0.0)
     pack_unit = Column(String, default="g")
@@ -56,6 +65,10 @@ class Ingredient(Base):
     base_unit = Column(String, default="g")
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("supplier_id", "supplier_code", name="uix_supplier_code"),
+    )
 
 
 class Recipe(Base):
@@ -82,33 +95,7 @@ class RecipeItem(Base):
 
     __table_args__ = (UniqueConstraint("recipe_id", "ingredient_id", name="uix_recipe_ingredient"),)
 
-
-# -------------------------------------------------------------------
-# INVENTAIRE ET STOCKS
-# -------------------------------------------------------------------
-class StockMovement(Base):
-    __tablename__ = "stock_movements"
-    id = Column(Integer, primary_key=True)
-    ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=False)
-    qty = Column(Float, default=0.0)
-    unit = Column(String, default="g")
-    movement_type = Column(String, default="entrée")
-    notes = Column(String, default="")
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-    ingredient = relationship("Ingredient")
-
-
-# -------------------------------------------------------------------
-# MENUS
-# -------------------------------------------------------------------
-class Menu(Base):
-    __tablename__ = "menus"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, nullable=False)
-    notes = Column(String, default="")
-
-    items = relationship(
+@@ -112,25 +125,52 @@ class Menu(Base):
         "MenuItem",
         back_populates="menu",
         cascade="all, delete-orphan",
@@ -134,3 +121,30 @@ class MenuItem(Base):
 # -------------------------------------------------------------------
 def init_db():
     Base.metadata.create_all(bind=engine)
+
+    insp = inspect(engine)
+    try:
+        ingredient_cols = {col["name"] for col in insp.get_columns("ingredients")}
+    except Exception:
+        ingredient_cols = set()
+
+    if "supplier_code" not in ingredient_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE ingredients ADD COLUMN supplier_code TEXT DEFAULT ''"))
+
+    try:
+        ingredient_indexes = {idx["name"] for idx in insp.get_indexes("ingredients")}
+    except Exception:
+        ingredient_indexes = set()
+    try:
+        ingredient_uniques = {uc["name"] for uc in insp.get_unique_constraints("ingredients")}
+    except Exception:
+        ingredient_uniques = set()
+
+    if ingredient_indexes.isdisjoint({"uix_supplier_code", "uix_ingredients_supplier_code"}) and "uix_supplier_code" not in ingredient_uniques:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uix_ingredients_supplier_code ON ingredients (supplier_id, supplier_code)"
+                )
+            )
