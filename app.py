@@ -100,7 +100,7 @@ def sidebar_nav(db) -> str:
                 f"Menus ({menu_n})",
                 "Fournisseurs",
                 "Inventaire",
-                   "Importations",
+                "Importations",
             ],
             icons=[
                 "basket",
