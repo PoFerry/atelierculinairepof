@@ -26,6 +26,10 @@ except Exception:  # pragma: no cover - si l'export n'est pas configuré
     import_table_to_db = None
 
 
+# -----------------------------------------------------------------------------
+# Résultats d'import
+# -----------------------------------------------------------------------------
+
 @dataclass
 class ImportResult:
     created: int = 0
@@ -43,7 +47,9 @@ class ImportResult:
         return " · ".join(parts)
 
 
-# --- Normalisation des entêtes ------------------------------------------------
+# -----------------------------------------------------------------------------
+# Normalisation des entêtes
+# -----------------------------------------------------------------------------
 
 def _canon(s: str) -> str:
     """Normalise une chaîne : retire accents, ponctuation, casse, etc."""
@@ -71,15 +77,13 @@ def _normalize_columns(df: pd.DataFrame, aliases: Dict[str, Iterable[str]]) -> p
     return df.rename(columns=rename_map)
 
 
-# --- Alias de colonnes --------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Alias de colonnes
+# -----------------------------------------------------------------------------
 
 INGREDIENT_ALIASES = {
-    "name": {
-        "name", "nom", "nom du produit", "nom du produits", "produit"
-    },
-    "category": {
-        "category", "categorie", "catégorie"
-    },
+    "name": {"name", "nom", "nom du produit", "nom du produits", "produit"},
+    "category": {"category", "categorie", "catégorie"},
     "base_unit": {
         "base_unit", "unite_base", "unité_base", "unite de base", "unité de base",
         "base", "format de base", "portion", "paquet"
@@ -95,19 +99,17 @@ INGREDIENT_ALIASES = {
         "pack_unit", "unite_format", "unité_format", "format_unite",
         "unite format", "unité format",
         "unite achat", "unite d'achat", "unité achat", "unité d'achat",
-        "format achat", "caisse", "boite", "boîte", "bte", "sac", "sachet", "paquet", "portion", "piece", "pièce"
+        "format achat", "caisse", "boite", "boîte", "bte", "sac", "sachet", "paquet",
+        "portion", "piece", "pièce"
     },
     "purchase_price": {
-        "purchase_price",
-        "prix_achat", "prix", "cout d'achat", "coût d'achat",
+        "purchase_price", "prix_achat", "prix", "cout d'achat", "coût d'achat",
         "prix d'achat", "prix dachat"
     },
-    "supplier": {
-        "supplier", "fournisseur"
-    },
+    "supplier": {"supplier", "fournisseur"},
     "supplier_code": {
-        "supplier_code", "code_fournisseur", "code",
-        "code produit chez fournisseur", "code produit", "sku fournisseur"
+        "supplier_code", "code_fournisseur", "code", "code produit chez fournisseur",
+        "code produit", "sku fournisseur"
     },
 }
 
@@ -122,7 +124,9 @@ RECIPE_ALIASES = {
 }
 
 
-# --- Coercions & Helpers ------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Coercions & Helpers
+# -----------------------------------------------------------------------------
 
 def _coerce_str(value) -> str:
     if pd.isna(value):
@@ -132,9 +136,9 @@ def _coerce_str(value) -> str:
 
 def _coerce_float(value) -> Optional[float]:
     """Convertit en float en tolérant :
-    - virgule décimale (fr) ou point (en)
-    - séparateurs de milliers (espace, NBSP, espace étroit, virgule)
-    - suffixes monnaie (%) / $ / CAD / EUR / USD
+    - formats FR/EN (1.234,56 / 1,234.56 / 1234,56 / 1234.56)
+    - séparateurs de milliers . , espace, NBSP, espace étroit
+    - suffixes monnaie (%,$,CAD,EUR,USD) et placeholders (NA, s/o, -, —)
     - valeurs vides -> None
     """
     if pd.isna(value):
@@ -146,30 +150,42 @@ def _coerce_float(value) -> Optional[float]:
     if not txt:
         return None
 
-    # Normalisation espaces (classiques, NBSP, espace étroit)
+    # Placeholders à traiter comme vide
+    placeholders = {"-", "—", "na", "n/a", "nd", "s/o", "s.o.", "null", "none"}
+    if txt.lower() in placeholders:
+        return None
+
+    # Supprimer espaces (normaux, NBSP, espace étroit)
     txt = re.sub(r"[\s\u00A0\u202F]+", "", txt)
 
-    # Retirer symboles monétaires/codes et %
+    # Retirer symboles monétaires et %
     txt = txt.replace("$", "").replace("€", "").replace("£", "")
     txt = re.sub(r"(cad|usd|eur)$", "", txt, flags=re.IGNORECASE)
     txt = txt.replace("%", "")
 
-    # Cas mixtes "1,234.56" -> enlever virgules de milliers
+    # Gestion des séparateurs mixés
     if "," in txt and "." in txt:
-        txt = txt.replace(",", "")
+        last_comma = txt.rfind(",")
+        last_dot = txt.rfind(".")
+        if last_comma > last_dot:
+            # style EU : '.' milliers, ',' décimal
+            txt = txt.replace(".", "")
+            txt = txt.replace(",", ".")
+        else:
+            # style US : ',' milliers, '.' décimal
+            txt = txt.replace(",", "")
     else:
-        # Cas FR "1234,56" -> virgule décimale
+        # Un seul séparateur -> virgule = décimal
         if "," in txt and "." not in txt:
             txt = txt.replace(",", ".")
 
     txt = txt.strip()
-    if txt == "":
+    if txt == "" or txt in {".", "-.", "+."}:
         return None
 
     try:
         return float(txt)
     except ValueError:
-        # Dernier filet: garder chiffres/signes/point
         txt2 = re.sub(r"[^0-9\.\-+]", "", txt)
         if txt2 in ("", ".", "-.", "+."):
             return None
@@ -179,9 +195,14 @@ def _coerce_float(value) -> Optional[float]:
             raise ValueError(f"Valeur numérique invalide: {value}")
 
 
-# --- Unités : nettoyage + familles -------------------------------------------
+# -----------------------------------------------------------------------------
+# Unités : nettoyage + familles
+# -----------------------------------------------------------------------------
 
-_UNIT_COUNT = {"unit", "unite", "u", "piece", "pièce", "pc", "pz", "portion", "paquet", "caisse", "boite", "boîte", "bte", "sac", "sachet"}
+_UNIT_COUNT = {
+    "unit", "unite", "u", "piece", "pièce", "pc", "pz",
+    "portion", "paquet", "caisse", "boite", "boîte", "bte", "sac", "sachet"
+}
 _UNIT_MASS  = {"g", "kg", "lb"}
 _UNIT_VOL   = {"ml", "l"}
 
@@ -198,7 +219,8 @@ def _clean_unit_text(s: str) -> str:
     synonyms = {
         "unite": "unit", "u": "unit", "piece": "unit", "pc": "unit", "pz": "unit",
         "portion": "unit", "paquet": "unit", "caisse": "unit",
-        "boite": "unit", "boîte": "unit", "bte": "unit", "sac": "unit", "sachet": "unit",
+        "boite": "unit", "boîte": "unit", "bte": "unit",
+        "sac": "unit", "sachet": "unit",
         "litre": "l", "liter": "l", "millilitre": "ml", "milliliter": "ml",
         "gramme": "g", "kilogramme": "kg", "lbs": "lb"
     }
@@ -224,51 +246,69 @@ def _canon_base_unit(u: str) -> str:
         return "ml"  # l -> ml pour la base
     if fam == "count":
         return "unit"
-    # fallback : si inconnu, on laisse vide (sera traité plus bas)
     return ""
 
 
 def _reconcile_units(base_u: str, pack_u: str, pack_size: Optional[float]) -> tuple[str, str]:
     """
-    Harmonise base_unit et pack_unit selon leur famille :
-    - base dans {g, ml, unit}
-    - règles de réconciliation si familles incompatibles
+    Harmonise base_unit et pack_unit :
+    - base_unit forcée dans {g, ml, unit} quand c'est possible
+    - si base manquante : on déduit depuis pack_unit ; sinon fallback 'unit'
+    - si pack='unit' & base mass/vol -> pack = base (pack_size exprimé dans la base)
+    - si base=count & pack mass/vol -> base = canon(pack)
+    - si base mass & pack vol (ou inverse) -> base s'aligne sur pack
     """
-    # 1) Nettoyage premier passage
     base_u = _clean_unit_text(base_u)
     pack_u = _clean_unit_text(pack_u)
 
-    # 2) Canonicalisation base -> {g, ml, unit} quand possible
-    base_u = _canon_base_unit(base_u)
-    pack_fam = _unit_family(pack_u)
-    base_fam = _unit_family(base_u)
+    def fam(u: str) -> Optional[str]:
+        return _unit_family(u)
 
-    # 3) Si base manquante mais pack connu -> base = canon(pack)
-    if not base_u and pack_fam:
-        base_u = _canon_base_unit(pack_u)
-        base_fam = _unit_family(base_u)
+    def canon_base(u: str) -> str:
+        return _canon_base_unit(u)
 
-    # 4) Si pack est "unit" et base est mass/vol, on suppose que pack_size est donné dans la base
-    if pack_fam == "count" and base_fam in {"mass", "vol"}:
-        pack_u = base_u
-        pack_fam = base_fam
+    base_u_c = canon_base(base_u)
+    pack_f = fam(pack_u)
+    base_f = fam(base_u_c)
 
-    # 5) Si pack est mass/vol et base est mass/vol mais familiaux différents -> aligne base sur pack
-    if pack_fam in {"mass", "vol"} and base_fam in {"mass", "vol"} and pack_fam != base_fam:
-        base_u = _canon_base_unit(pack_u)
-        base_fam = _unit_family(base_u)
+    # Base manquante -> tenter depuis pack ; sinon 'unit'
+    if not base_u_c:
+        if pack_f:
+            base_u_c = canon_base(pack_u)
+            base_f = fam(base_u_c)
+        else:
+            base_u_c = "unit"
+            base_f = "count"
 
-    # 6) Si base est count et pack mass/vol -> base = pack (on préfère une mesure utile pour le coût)
-    if base_fam == "count" and pack_fam in {"mass", "vol"}:
-        base_u = _canon_base_unit(pack_u)
-        base_fam = _unit_family(base_u)
+    # pack unit vide -> pack = base
+    if not pack_u:
+        pack_u = base_u_c
+        pack_f = base_f
 
-    # 7) Normalisation finale via normalize_unit (après nos règles)
-    norm_base = normalize_unit(base_u) if base_u else ""
+    # pack=count & base mass/vol -> pack = base
+    if pack_f == "count" and base_f in {"mass", "vol"}:
+        pack_u = base_u_c
+        pack_f = base_f
+
+    # base=count & pack mass/vol -> base = pack
+    if base_f == "count" and pack_f in {"mass", "vol"}:
+        base_u_c = canon_base(pack_u)
+        base_f = fam(base_u_c)
+
+    # base mass & pack vol (ou inverse) -> aligner base sur pack
+    if base_f in {"mass", "vol"} and pack_f in {"mass", "vol"} and base_f != pack_f:
+        base_u_c = canon_base(pack_u)
+        base_f = fam(base_u_c)
+
+    # Normalisation finale via normalize_unit
+    norm_base = normalize_unit(base_u_c) if base_u_c else "unit"
     norm_pack = normalize_unit(pack_u) if pack_u else norm_base
-
     return norm_base, norm_pack
 
+
+# -----------------------------------------------------------------------------
+# Résolution fournisseur
+# -----------------------------------------------------------------------------
 
 def _resolve_supplier(db: Session, cache: Dict[str, Supplier], name: str) -> Supplier | None:
     if not name:
@@ -289,11 +329,15 @@ def _resolve_supplier(db: Session, cache: Dict[str, Supplier], name: str) -> Sup
     return supplier
 
 
-# --- Parsing ingrédients ------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Parsing ingrédients (tolérant aux cases vides)
+# -----------------------------------------------------------------------------
 
 def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
     entries: List[dict] = []
+    skipped: List[str] = []
     errors: List[str] = []
+
     df = _normalize_columns(df, INGREDIENT_ALIASES)
     required = {"name", "base_unit", "pack_size", "pack_unit", "purchase_price"}
     missing = [col for col in required if col not in df.columns]
@@ -308,29 +352,33 @@ def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
         try:
             name = _coerce_str(row.get("name"))
             if not name:
-                raise ValueError("Nom requis")
+                skipped.append(f"Ligne {line_no}: nom vide → ignorée")
+                continue
 
-            pack_size = _coerce_float(row.get("pack_size"))
-            purchase_price = _coerce_float(row.get("purchase_price"))
+            # Tolérance : si vide, on met des valeurs par défaut raisonnables
+            pack_size = _coerce_float(row.get("pack_size")) or 1.0
+            purchase_price = _coerce_float(row.get("purchase_price")) or 0.0
 
             base_u_txt = _coerce_str(row.get("base_unit"))
             pack_u_txt = _coerce_str(row.get("pack_unit"))
 
+            # Déduction/harmonisation des unités (même si vides)
             base_unit, pack_unit = _reconcile_units(base_u_txt, pack_u_txt, pack_size)
-
             if not base_unit:
-                raise ValueError("Unité de base manquante")
-            if pack_size is None or pack_size <= 0:
-                raise ValueError("Format d'achat invalide")
-            if purchase_price is None or purchase_price < 0:
-                raise ValueError("Prix d'achat invalide")
+                base_unit = "unit"
+            if not pack_unit:
+                pack_unit = base_unit
 
-            price_per_base = compute_price_per_base_unit(
-                pack_size=pack_size,
-                pack_unit=pack_unit,
-                base_unit=base_unit,
-                purchase_price=purchase_price,
-            )
+            # Calcul du coût par unité (si échec, on met 0.0)
+            try:
+                price_per_base = compute_price_per_base_unit(
+                    pack_size=pack_size,
+                    pack_unit=pack_unit,
+                    base_unit=base_unit,
+                    purchase_price=purchase_price,
+                )
+            except Exception:
+                price_per_base = 0.0
 
             entries.append(
                 {
@@ -345,8 +393,12 @@ def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
                     "supplier_code": _coerce_str(row.get("supplier_code")),
                 }
             )
+
         except Exception as exc:
             errors.append(f"Ligne {line_no}: {exc}")
+
+    if skipped:
+        errors.append(f"{len(skipped)} ligne(s) ignorée(s) car incomplètes :\n" + "\n".join(skipped[:10]))
     return entries, errors
 
 
@@ -383,7 +435,9 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
     return ImportResult(created=created, updated=updated, errors=[])
 
 
-# --- Parsing recettes ---------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Parsing recettes
+# -----------------------------------------------------------------------------
 
 def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], List[str]]:
     df = _normalize_columns(df, RECIPE_ALIASES)
@@ -405,12 +459,7 @@ def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], 
             continue
         rec = recipes.setdefault(
             name,
-            {
-                "category": "",
-                "servings": 1,
-                "instructions": "",
-                "items": [],
-            },
+            {"category": "", "servings": 1, "instructions": "", "items": []},
         )
         if row.get("category") and not rec["category"]:
             rec["category"] = _coerce_str(row.get("category"))
@@ -503,7 +552,9 @@ def _apply_recipe_import(db: Session, recipes: Dict[str, dict]) -> ImportResult:
     return ImportResult(created=created, updated=updated, errors=[])
 
 
-# --- Lecture CSV tolérante ----------------------------------------------------
+# -----------------------------------------------------------------------------
+# Lecture CSV tolérante
+# -----------------------------------------------------------------------------
 
 def _read_uploaded_csv(uploaded_file) -> pd.DataFrame:
     if uploaded_file is None:
@@ -513,13 +564,16 @@ def _read_uploaded_csv(uploaded_file) -> pd.DataFrame:
     except Exception:
         pass
     try:
+        # sep=None -> auto-détection (virgule/point-virgule/tab)
         return pd.read_csv(uploaded_file, sep=None, engine="python", encoding="utf-8-sig")
     except UnicodeDecodeError:
         uploaded_file.seek(0)
         return pd.read_csv(uploaded_file, sep=None, engine="python", encoding="latin-1")
 
 
-# --- UI Streamlit -------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# UI Streamlit
+# -----------------------------------------------------------------------------
 
 def _render_sheet_import_section(db: Session) -> None:
     if import_table_to_db is None or import_all_tables is None:
