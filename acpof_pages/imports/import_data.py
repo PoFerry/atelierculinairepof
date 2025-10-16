@@ -8,6 +8,8 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+import unicodedata
+import re
 
 from db import Ingredient, Recipe, RecipeItem, Supplier
 from acpof_pages.logic import compute_price_per_base_unit
@@ -41,16 +43,72 @@ class ImportResult:
         return " · ".join(parts)
 
 
-# Alias de colonnes acceptés (en minuscules déjà normalisés)
+# --- Normalisation des entêtes ------------------------------------------------
+
+def _canon(s: str) -> str:
+    """Normalise une chaîne : retire accents, ponctuation, casse, etc."""
+    s = str(s)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.lower().strip()
+    s = re.sub(r"[’'`]", "", s)          # prix d'achat -> prix dachat
+    s = re.sub(r"[_\-.\/]", " ", s)      # unite_base -> unite base
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _normalize_columns(df: pd.DataFrame, aliases: Dict[str, Iterable[str]]) -> pd.DataFrame:
+    """Renomme les colonnes d'un DataFrame selon les alias fournis."""
+    canon_to_original = {_canon(c): c for c in df.columns}
+    rename_map: Dict[str, str] = {}
+    for canonical, candidates in aliases.items():
+        for candidate in candidates:
+            key = _canon(candidate)
+            if key in canon_to_original:
+                original_col = canon_to_original[key]
+                rename_map[original_col] = canonical
+                break
+    return df.rename(columns=rename_map)
+
+
+# --- Alias de colonnes --------------------------------------------------------
+
 INGREDIENT_ALIASES = {
-    "name": {"name", "nom"},
-    "category": {"category", "categorie", "catégorie"},
-    "base_unit": {"base_unit", "unite_base", "unité_base", "base"},
-    "pack_size": {"pack_size", "format", "taille_colis", "format_achat"},
-    "pack_unit": {"pack_unit", "unite_format", "unité_format", "format_unite"},
-    "purchase_price": {"purchase_price", "prix_achat", "prix"},
-    "supplier": {"supplier", "fournisseur"},
-    "supplier_code": {"supplier_code", "code_fournisseur", "code"},
+    "name": {
+        "name", "nom", "nom du produit", "nom du produits", "produit"
+    },
+    "category": {
+        "category", "categorie", "catégorie"
+    },
+    "base_unit": {
+        "base_unit", "unite_base", "unité_base", "unite de base", "unité de base",
+        "base", "format de base"
+    },
+    "pack_size": {
+        "pack_size", "format", "taille_colis",
+        "format achat", "qté format achat", "qte format achat",
+        "qté format d'achat", "qte format d'achat",
+        "quantite format achat", "quantité format achat",
+        "quantite achat", "quantité achat"
+    },
+    "pack_unit": {
+        "pack_unit", "unite_format", "unité_format", "format_unite",
+        "unite format", "unité format",
+        "unite achat", "unite d'achat", "unité achat", "unité d'achat",
+        "format achat"
+    },
+    "purchase_price": {
+        "purchase_price",
+        "prix_achat", "prix", "cout d'achat", "coût d'achat",
+        "prix d'achat", "prix dachat"
+    },
+    "supplier": {
+        "supplier", "fournisseur"
+    },
+    "supplier_code": {
+        "supplier_code", "code_fournisseur", "code",
+        "code produit chez fournisseur", "code produit", "sku fournisseur"
+    },
 }
 
 RECIPE_ALIASES = {
@@ -64,17 +122,7 @@ RECIPE_ALIASES = {
 }
 
 
-def _normalize_columns(df: pd.DataFrame, aliases: Dict[str, Iterable[str]]) -> pd.DataFrame:
-    columns = {c: c.strip().lower() for c in df.columns}
-    df = df.rename(columns=columns)
-    rename_map: Dict[str, str] = {}
-    for canonical, candidates in aliases.items():
-        for candidate in candidates:
-            if candidate in df.columns:
-                rename_map[candidate] = canonical
-                break
-    return df.rename(columns=rename_map)
-
+# --- Coercions & Helpers ------------------------------------------------------
 
 def _coerce_str(value) -> str:
     if pd.isna(value):
@@ -115,6 +163,8 @@ def _resolve_supplier(db: Session, cache: Dict[str, Supplier], name: str) -> Sup
     cache[key] = supplier
     return supplier
 
+
+# --- Parsing ingrédients ------------------------------------------------------
 
 def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
     entries: List[dict] = []
@@ -165,7 +215,7 @@ def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
                     "supplier_code": _coerce_str(row.get("supplier_code")),
                 }
             )
-        except Exception as exc:  # noqa: BLE001 - on veut capter toute erreur ici
+        except Exception as exc:
             errors.append(f"Ligne {line_no}: {exc}")
     return entries, errors
 
@@ -202,6 +252,8 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
     auto_export(db, "ingredients")
     return ImportResult(created=created, updated=updated, errors=[])
 
+
+# --- Parsing recettes ---------------------------------------------------------
 
 def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], List[str]]:
     df = _normalize_columns(df, RECIPE_ALIASES)
@@ -320,19 +372,23 @@ def _apply_recipe_import(db: Session, recipes: Dict[str, dict]) -> ImportResult:
     return ImportResult(created=created, updated=updated, errors=[])
 
 
+# --- Lecture CSV tolérante ----------------------------------------------------
+
 def _read_uploaded_csv(uploaded_file) -> pd.DataFrame:
     if uploaded_file is None:
         raise ValueError("Aucun fichier fourni")
     try:
         uploaded_file.seek(0)
-    except Exception:  # pragma: no cover - UploadedFile supporte seek mais on reste prudent
+    except Exception:
         pass
     try:
-        return pd.read_csv(uploaded_file)
+        return pd.read_csv(uploaded_file, sep=None, engine="python", encoding="utf-8-sig")
     except UnicodeDecodeError:
         uploaded_file.seek(0)
-        return pd.read_csv(uploaded_file, encoding="latin-1")
+        return pd.read_csv(uploaded_file, sep=None, engine="python", encoding="latin-1")
 
+
+# --- UI Streamlit -------------------------------------------------------------
 
 def _render_sheet_import_section(db: Session) -> None:
     if import_table_to_db is None or import_all_tables is None:
@@ -353,7 +409,7 @@ def _render_sheet_import_section(db: Session) -> None:
             with st.spinner("Import des tables depuis Google Sheets…"):
                 try:
                     res = import_all_tables(db)
-                except Exception as exc:  # pragma: no cover - dépend de l'API externe
+                except Exception as exc:
                     st.error(f"Import global échoué : {exc}")
                 else:
                     st.success(
@@ -374,7 +430,7 @@ def _render_sheet_import_section(db: Session) -> None:
             with st.spinner(f"Import de {table}…"):
                 try:
                     count = import_table_to_db(db, table)
-                except Exception as exc:  # pragma: no cover - dépend API
+                except Exception as exc:
                     st.error(f"Import échoué : {exc}")
                 else:
                     st.success(f"{count} ligne(s) importée(s) depuis Google Sheets.")
