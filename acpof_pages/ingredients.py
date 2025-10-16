@@ -47,6 +47,7 @@ def ingredients_page(db: Session) -> None:
         purchase_price = st.number_input("Prix d’achat ($)", min_value=0.0, value=10.0, step=0.01)
 
         supplier_sel = st.selectbox("Fournisseur", supplier_options, index=0)
+        supplier_code = st.text_input("Code produit fournisseur")
 
         if st.button("Enregistrer"):
             if not name.strip():
@@ -78,6 +79,7 @@ def ingredients_page(db: Session) -> None:
                         ing.purchase_price = float(purchase_price or 0)
                         ing.price_per_base_unit = float(price_per_base)
                         ing.supplier_id = supplier_id
+                        ing.supplier_code = (supplier_code or "").strip()
                     else:
                         ing = Ingredient(
                             name=name.strip(),
@@ -88,6 +90,7 @@ def ingredients_page(db: Session) -> None:
                             purchase_price=float(purchase_price or 0),
                             price_per_base_unit=float(price_per_base),
                             supplier_id=supplier_id,
+                            supplier_code=(supplier_code or "").strip(),
                         )
                         db.add(ing)
 
@@ -105,15 +108,19 @@ def ingredients_page(db: Session) -> None:
 
     # ---- Liste des ingrédients ----
     rows = db.query(Ingredient).order_by(Ingredient.name).all()
-    df = pd.DataFrame([{
-        "Nom": i.name,
-        "Catégorie": i.category,
-        "Unité de base": i.base_unit,
-        "Format achat": f"{i.pack_size:g} {i.pack_unit}",
-        "Prix d’achat ($)": round(i.purchase_price, 2),
-        "Prix par unité de base": round(i.price_per_base_unit, 4),
-        "Fournisseur": (i.supplier.name if i.supplier else "")
-    } for i in rows])
+    df = pd.DataFrame([
+        {
+            "Nom": i.name,
+            "Catégorie": i.category,
+            "Unité de base": i.base_unit,
+            "Format achat": f"{i.pack_size:g} {i.pack_unit}",
+            "Prix d’achat ($)": round(i.purchase_price, 2),
+            "Prix par unité de base": round(i.price_per_base_unit, 4),
+            "Fournisseur": (i.supplier.name if i.supplier else ""),
+            "Code fournisseur": i.supplier_code or "",
+        }
+        for i in rows
+    ])
 
     if not df.empty:
         st.dataframe(
