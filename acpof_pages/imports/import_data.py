@@ -335,22 +335,25 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
     created = 0
     updated = 0
     supplier_cache: Dict[str, Supplier] = {}
-    # On collecte ici les erreurs SQL (unicité, etc.)
     sql_errors: List[str] = []
 
     try:
         for payload in rows:
             supplier = _resolve_supplier(db, supplier_cache, payload["supplier"])
+
+            # 🔧 IMPORTANT : ne plus utiliser func.lower(...) ici (accents non gérés par SQLite)
+            name_key = (payload["name"] or "").strip()
+
             ingredient = (
                 db.query(Ingredient)
-                .filter(func.lower(Ingredient.name) == payload["name"].lower())
+                .filter(Ingredient.name == name_key)  # comparaison exacte (respecte les accents)
                 .one_or_none()
             )
 
             if ingredient:
                 updated += 1
             else:
-                ingredient = Ingredient(name=payload["name"])
+                ingredient = Ingredient(name=name_key)
                 db.add(ingredient)
                 created += 1
 
@@ -361,18 +364,17 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
             ingredient.purchase_price = payload["purchase_price"]
             ingredient.price_per_base_unit = payload["price_per_base_unit"]
             ingredient.supplier_id = supplier.id if supplier else None
-            # IMPORTANT : jamais "", toujours None si vide
+
+            # On ne stocke jamais "" pour supplier_code : None → NULL en DB
             ingredient.supplier_code = _normalize_supplier_code(payload.get("supplier_code"))
 
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        # Message plus clair : souvent contrainte UNIQUE (supplier_id, supplier_code)
         sql_errors.append(
-            "Contrainte d'unicité violée pour (fournisseur, code fournisseur). "
-            "Assurez-vous qu'un même fournisseur n'a pas plusieurs ingrédients avec le même supplier_code. "
-            "Les valeurs vides doivent être NULL (gérées automatiquement par l'import). "
-            f"Détail: {exc.orig}"
+            "Contrainte d'unicité violée. "
+            "Vérifiez les doublons de nom d'ingrédient **exact** (accents inclus) ou les couples (fournisseur, code). "
+            f"Détail : {exc.orig}"
         )
         return ImportResult(created=created, updated=updated, errors=sql_errors)
     except Exception as exc:
@@ -382,6 +384,7 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
 
     auto_export(db, "ingredients")
     return ImportResult(created=created, updated=updated, errors=[])
+
 
 
 # ------------------------- Parsing recettes -------------------------
@@ -440,11 +443,12 @@ def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], 
             errors.append(f"Ligne {line_no}: quantité manquante")
             continue
         unit = normalize_unit(_coerce_str(row.get("unit")) or "g")
-        ingredient = (
+            ingredient = (
             db.query(Ingredient)
-            .filter(func.lower(Ingredient.name) == ing_name.lower())
+            .filter(Ingredient.name == ing_name.strip())  # comparaison exacte (accents respectés)
             .one_or_none()
-        )
+)
+
         if not ingredient:
             errors.append(
                 f"Ligne {line_no}: ingrédient inconnu '{(ing_name)}' (créez-le avant import)"
