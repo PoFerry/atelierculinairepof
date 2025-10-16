@@ -16,7 +16,7 @@ TABLES = {
     # nom_onglet : (colonnes dans l'ordre)
     "suppliers": ["id", "name", "contact", "phone", "email", "notes"],
     "ingredients": [
-        "id", "name", "category", "supplier_id",
+         "id", "name", "category", "supplier_id", "supplier_code",
         "pack_size", "pack_unit", "purchase_price",
         "price_per_base_unit", "base_unit", "created_at",
     ],
