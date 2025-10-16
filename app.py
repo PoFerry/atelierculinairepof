@@ -5,6 +5,7 @@ from pathlib import Path
 from streamlit_option_menu import option_menu
 from importlib import import_module
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
 from db import init_db, SessionLocal
@@ -60,20 +61,29 @@ def page_header() -> None:
     )
 
 def _get_counts(db) -> tuple[int, int, int]:
-    from db import Ingredient, Recipe, Menu
-    try:
-        return (
-            db.query(Ingredient).count(),
-            db.query(Recipe).count(),
-            db.query(Menu).count(),
-        )
-    except OperationalError:
-        db.rollback()
-        st.warning(
-            "Impossible de récupérer les compteurs depuis la base de données. "
-            "Vérifiez la connexion puis réessayez."
-        )
-        return (0, 0, 0)
+    ffrom db import Ingredient, Menu, Recipe
+
+    def _count(model):
+        stmt = select(func.count()).select_from(model)
+        return db.execute(stmt).scalar_one()
+
+    for attempt in range(2):
+        try:
+            return tuple(_count(model) for model in (Ingredient, Recipe, Menu))
+        except OperationalError:
+            db.rollback()
+            if attempt == 0:
+                # Ensure the schema exists before retrying (e.g. fresh database).
+                init_db()
+                continue
+            st.warning(
+                "Impossible de récupérer les compteurs depuis la base de données. "
+                "Vérifiez la connexion puis réessayez."
+            )
+            break
+
+    return (0, 0, 0)
+
 
 def sidebar_nav(db) -> str:
     with st.sidebar:
@@ -142,16 +152,19 @@ def main() -> None:
     init_db()
     db = SessionLocal()
 
-    page_header()
-    selected = sidebar_nav(db)
+    try:
+        page_header()
+        selected = sidebar_nav(db)
 
-    base_label = selected.split(" (")[0]
-    if base_label not in ROUTES:
-        st.error("Page inconnue dans la navigation.")
-        return
+        base_label = selected.split(" (")[0]
+        if base_label not in ROUTES:
+            st.error("Page inconnue dans la navigation.")
+            return
 
-    page_fn = load_page_callable(base_label)
-    page_fn(db)
+        page_fn = load_page_callable(base_label)
+        page_fn(db)
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     main()
