@@ -82,7 +82,7 @@ INGREDIENT_ALIASES = {
     },
     "base_unit": {
         "base_unit", "unite_base", "unité_base", "unite de base", "unité de base",
-        "base", "format de base"
+        "base", "format de base", "portion", "paquet"
     },
     "pack_size": {
         "pack_size", "format", "taille_colis",
@@ -95,7 +95,7 @@ INGREDIENT_ALIASES = {
         "pack_unit", "unite_format", "unité_format", "format_unite",
         "unite format", "unité format",
         "unite achat", "unite d'achat", "unité achat", "unité d'achat",
-        "format achat"
+        "format achat", "caisse", "boite", "boîte", "bte", "sac", "sachet", "paquet", "portion", "piece", "pièce"
     },
     "purchase_price": {
         "purchase_price",
@@ -179,8 +179,14 @@ def _coerce_float(value) -> Optional[float]:
             raise ValueError(f"Valeur numérique invalide: {value}")
 
 
+# --- Unités : nettoyage + familles -------------------------------------------
+
+_UNIT_COUNT = {"unit", "unite", "u", "piece", "pièce", "pc", "pz", "portion", "paquet", "caisse", "boite", "boîte", "bte", "sac", "sachet"}
+_UNIT_MASS  = {"g", "kg", "lb"}
+_UNIT_VOL   = {"ml", "l"}
+
 def _clean_unit_text(s: str) -> str:
-    """Nettoie les unités saisies de façon libre avant normalize_unit."""
+    """Nettoie les unités saisies librement avant normalize_unit."""
     s = str(s or "").strip().lower()
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -188,24 +194,80 @@ def _clean_unit_text(s: str) -> str:
     # Enlever préfixes / ponctuations (ex: "/g", "- kg")
     s = re.sub(r"^[\/\-\–\—\s]+", "", s)
     s = re.sub(r"\s+", " ", s).strip()
-    # Pluriels simples
-    if s.endswith("s") and s not in ("lbs",):
-        s = s[:-1]
-    # Synonymes usuels FR/EN
+    # Synonymes usuels -> formes de base
     synonyms = {
-        "unite": "unit",
-        "u": "unit",
-        "piece": "unit",
-        "pc": "unit",
-        "pz": "unit",
-        "litre": "l",
-        "millilitre": "ml",
-        "milliliter": "ml",
-        "gramme": "g",
-        "kilogramme": "kg",
-        "lbs": "lb",
+        "unite": "unit", "u": "unit", "piece": "unit", "pc": "unit", "pz": "unit",
+        "portion": "unit", "paquet": "unit", "caisse": "unit",
+        "boite": "unit", "boîte": "unit", "bte": "unit", "sac": "unit", "sachet": "unit",
+        "litre": "l", "liter": "l", "millilitre": "ml", "milliliter": "ml",
+        "gramme": "g", "kilogramme": "kg", "lbs": "lb"
     }
     return synonyms.get(s, s)
+
+def _unit_family(u: str) -> Optional[str]:
+    if not u:
+        return None
+    if u in _UNIT_COUNT:
+        return "count"
+    if u in _UNIT_MASS:
+        return "mass"
+    if u in _UNIT_VOL:
+        return "vol"
+    return None
+
+def _canon_base_unit(u: str) -> str:
+    """Force base_unit dans {g, ml, unit}."""
+    fam = _unit_family(u)
+    if fam == "mass":
+        return "g"   # kg/lb seront convertis vers g pour la base
+    if fam == "vol":
+        return "ml"  # l -> ml pour la base
+    if fam == "count":
+        return "unit"
+    # fallback : si inconnu, on laisse vide (sera traité plus bas)
+    return ""
+
+
+def _reconcile_units(base_u: str, pack_u: str, pack_size: Optional[float]) -> tuple[str, str]:
+    """
+    Harmonise base_unit et pack_unit selon leur famille :
+    - base dans {g, ml, unit}
+    - règles de réconciliation si familles incompatibles
+    """
+    # 1) Nettoyage premier passage
+    base_u = _clean_unit_text(base_u)
+    pack_u = _clean_unit_text(pack_u)
+
+    # 2) Canonicalisation base -> {g, ml, unit} quand possible
+    base_u = _canon_base_unit(base_u)
+    pack_fam = _unit_family(pack_u)
+    base_fam = _unit_family(base_u)
+
+    # 3) Si base manquante mais pack connu -> base = canon(pack)
+    if not base_u and pack_fam:
+        base_u = _canon_base_unit(pack_u)
+        base_fam = _unit_family(base_u)
+
+    # 4) Si pack est "unit" et base est mass/vol, on suppose que pack_size est donné dans la base
+    if pack_fam == "count" and base_fam in {"mass", "vol"}:
+        pack_u = base_u
+        pack_fam = base_fam
+
+    # 5) Si pack est mass/vol et base est mass/vol mais familiaux différents -> aligne base sur pack
+    if pack_fam in {"mass", "vol"} and base_fam in {"mass", "vol"} and pack_fam != base_fam:
+        base_u = _canon_base_unit(pack_u)
+        base_fam = _unit_family(base_u)
+
+    # 6) Si base est count et pack mass/vol -> base = pack (on préfère une mesure utile pour le coût)
+    if base_fam == "count" and pack_fam in {"mass", "vol"}:
+        base_u = _canon_base_unit(pack_u)
+        base_fam = _unit_family(base_u)
+
+    # 7) Normalisation finale via normalize_unit (après nos règles)
+    norm_base = normalize_unit(base_u) if base_u else ""
+    norm_pack = normalize_unit(pack_u) if pack_u else norm_base
+
+    return norm_base, norm_pack
 
 
 def _resolve_supplier(db: Session, cache: Dict[str, Supplier], name: str) -> Supplier | None:
@@ -248,19 +310,16 @@ def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
             if not name:
                 raise ValueError("Nom requis")
 
-            # Nettoyage puis normalisation des unités
-            base_unit_txt = _clean_unit_text(_coerce_str(row.get("base_unit")) or "")
-            pack_unit_txt = _clean_unit_text(_coerce_str(row.get("pack_unit")) or base_unit_txt)
-
-            if not base_unit_txt:
-                raise ValueError("Unité de base manquante")
-
-            base_unit = normalize_unit(base_unit_txt)
-            pack_unit = normalize_unit(pack_unit_txt or base_unit)
-
             pack_size = _coerce_float(row.get("pack_size"))
             purchase_price = _coerce_float(row.get("purchase_price"))
 
+            base_u_txt = _coerce_str(row.get("base_unit"))
+            pack_u_txt = _coerce_str(row.get("pack_unit"))
+
+            base_unit, pack_unit = _reconcile_units(base_u_txt, pack_u_txt, pack_size)
+
+            if not base_unit:
+                raise ValueError("Unité de base manquante")
             if pack_size is None or pack_size <= 0:
                 raise ValueError("Format d'achat invalide")
             if purchase_price is None or purchase_price < 0:
@@ -380,7 +439,8 @@ def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], 
         if qty is None:
             errors.append(f"Ligne {line_no}: quantité manquante")
             continue
-        unit = normalize_unit(_clean_unit_text(_coerce_str(row.get("unit")) or "g"))
+        unit = _clean_unit_text(_coerce_str(row.get("unit")) or "g")
+        unit = normalize_unit(unit)
         ingredient = (
             db.query(Ingredient)
             .filter(func.lower(Ingredient.name) == ing_name.lower())
