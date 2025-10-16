@@ -208,9 +208,10 @@ def _parse_ingredient_rows(df: pd.DataFrame) -> tuple[List[dict], List[str]]:
 def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
     """
     Import ingrédients avec :
-    - comparaison EXACTE sur le nom (accents respectés) pour éviter des faux 'non-trouvés'
-    - supplier_code vide -> NULL (évite les doublons uniques (supplier_id, supplier_code))
-    - rollback propre en cas d'erreur SQL
+    - comparaison EXACTE sur le nom (accents respectés)
+    - supplier_code vide -> NULL
+    - si (supplier_id, supplier_code) est déjà pris par un autre ingrédient, on désactive le code (NULL) pour la ligne courante
+      afin d'éviter la violation UNIQUE, et on poursuit l'import.
     """
     created = 0
     updated = 0
@@ -219,11 +220,11 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
 
     try:
         for payload in rows:
-            supplier = _resolve_supplier(db, supplier_cache, payload["supplier"])
+            # Résolution fournisseur (égalité exacte)
+            supplier = _resolve_supplier(db, supplier_cache, payload.get("supplier", ""))
 
-            # IMPORTANT : comparaison exacte (plus de func.lower avec accents)
-            name_key = (payload["name"] or "").strip()
-
+            # Recherche par NOM exact (évite les faux 'non trouvés' liés aux accents)
+            name_key = (payload.get("name") or "").strip()
             ingredient = (
                 db.query(Ingredient)
                 .filter(Ingredient.name == name_key)
@@ -237,24 +238,45 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
                 db.add(ingredient)
                 created += 1
 
-            ingredient.category = payload["category"] or "Autre"
+            # Champs simples
+            ingredient.category = (payload.get("category") or "Autre")
             ingredient.base_unit = payload["base_unit"]
             ingredient.pack_size = payload["pack_size"]
             ingredient.pack_unit = payload["pack_unit"]
             ingredient.purchase_price = payload["purchase_price"]
             ingredient.price_per_base_unit = payload["price_per_base_unit"]
+
+            # Fournisseur / code
             ingredient.supplier_id = supplier.id if supplier else None
-            ingredient.supplier_code = _normalize_supplier_code(payload.get("supplier_code"))
+
+            # Normaliser le code : "" -> None (NULL)
+            scode = _normalize_supplier_code(payload.get("supplier_code"))
+
+            if ingredient.supplier_id is not None and scode:
+                # Vérifier si ce (supplier_id, supplier_code) est déjà utilisé par UN AUTRE ingrédient
+                existing_same_code = (
+                    db.query(Ingredient)
+                    .filter(
+                        Ingredient.supplier_id == ingredient.supplier_id,
+                        Ingredient.supplier_code == scode,
+                    )
+                    .one_or_none()
+                )
+                if existing_same_code and existing_same_code.name != ingredient.name:
+                    # Code déjà pris par un autre produit -> on désactive le code pour cette ligne
+                    scode = None  # évite la violation UNIQUE
+
+            ingredient.supplier_code = scode  # None -> NULL en DB
 
         db.commit()
 
     except IntegrityError as exc:
         db.rollback()
-        # On explicite les deux cas d'unicité usuels
         sql_errors.append(
-            "Violation de contrainte UNIQUE. Vérifiez :\n"
-            "- Les doublons exacts de *nom d'ingrédient* (accents inclus), et/ou\n"
-            "- Les doublons de couple *(fournisseur, code)* (les codes vides doivent être laissés vides → NULL).\n"
+            "Violation de contrainte UNIQUE malgré la résolution automatique des codes.\n"
+            "Vérifiez :\n"
+            "- Les doublons exacts de *nom d'ingrédient* (accents inclus)\n"
+            "- Les doublons (fournisseur, code) au sein du fichier lui-même\n"
             f"Détail SQL : {exc.orig}"
         )
         return ImportResult(created=created, updated=updated, errors=sql_errors)
@@ -265,7 +287,6 @@ def _apply_ingredient_import(db: Session, rows: List[dict]) -> ImportResult:
 
     auto_export(db, "ingredients")
     return ImportResult(created=created, updated=updated, errors=[])
-
 
 def _parse_recipe_rows(df: pd.DataFrame, db: Session) -> tuple[Dict[str, dict], List[str]]:
     df = _normalize_columns(df, RECIPE_ALIASES)
